@@ -24,6 +24,7 @@ const SCROLL_LOAD_THRESHOLD_PX = 96;
 
 const SampleLibrarySidebar = ({
   rootDir,
+  supportsDirectoryPicker,
   search,
   isLoading,
   error,
@@ -31,6 +32,7 @@ const SampleLibrarySidebar = ({
   filteredSampleCount,
   samples,
   onRootDirChange,
+  onPickDirectory,
   onSearchChange,
   onRefreshSamples,
   onPreviewSample,
@@ -102,28 +104,45 @@ const SampleLibrarySidebar = ({
     }
 
     onRootDirChange(normalizedRootDir);
-    onRefreshSamples(normalizedRootDir);
+    onRefreshSamples();
   }, [onRefreshSamples, onRootDirChange, rootDir, rootDirDraft]);
 
   return (
     <aside className={sidebarClassName}>
-      <div className="mb-3">
-        <label className={labelClassName}>LOCAL SAMPLE FOLDER</label>
-        <input
-          type="text"
-          value={rootDirDraft}
-          onChange={(event) => setRootDirDraft(event.target.value)}
-          onBlur={commitRootDirDraft}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              commitRootDirDraft();
-            }
-          }}
-          placeholder="/path/to/samples"
-          className={inputClassName}
-        />
-      </div>
+      {supportsDirectoryPicker ? (
+        <div className="mb-3">
+          <label className={labelClassName}>LOCAL SAMPLE FOLDER</label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={rootDir || "No folder selected"}
+              readOnly
+              className={`${inputClassName} flex-1`}
+            />
+            <button onClick={onPickDirectory} className={buttonClassName}>
+              Choose
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="mb-3">
+          <label className={labelClassName}>LOCAL SAMPLE FOLDER</label>
+          <input
+            type="text"
+            value={rootDirDraft}
+            onChange={(event) => setRootDirDraft(event.target.value)}
+            onBlur={commitRootDirDraft}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                commitRootDirDraft();
+              }
+            }}
+            placeholder="/path/to/samples"
+            className={inputClassName}
+          />
+        </div>
+      )}
 
       <div className="mb-3 flex gap-2">
         <div className="flex-1">
@@ -138,9 +157,14 @@ const SampleLibrarySidebar = ({
         </div>
         <button
           onClick={() => {
+            if (supportsDirectoryPicker) {
+              onRefreshSamples();
+              return;
+            }
+
             const normalizedRootDir = rootDirDraft.trim();
             onRootDirChange(normalizedRootDir || rootDir);
-            onRefreshSamples(normalizedRootDir || rootDir);
+            onRefreshSamples();
           }}
           className={`${buttonClassName} self-end`}
         >

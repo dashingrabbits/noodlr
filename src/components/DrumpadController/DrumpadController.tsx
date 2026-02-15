@@ -58,6 +58,16 @@ import {
   writePersistedSampleSoundsDir,
 } from "./DrumpadController.utilities";
 import { fetchSampleAssets } from "../../integrations/samples/sample.client";
+import {
+  clearPersistedDirectoryHandle,
+  isDirectoryPickerSupported,
+  openDirectoryPicker,
+  queryDirectoryReadPermission,
+  readPersistedDirectoryHandle,
+  requestDirectoryReadPermission,
+  scanDirectoryHandleForSamples,
+  writePersistedDirectoryHandle,
+} from "../../integrations/samples/sample.file-system";
 import type {
   SampleAsset,
   SampleMetadataOverride,
@@ -215,6 +225,10 @@ const DrumpadController = () => {
   const [projectNameDraft, setProjectNameDraft] = useState("");
   const [sampleRootDir, setSampleRootDir] = useState(getInitialSampleRootDir);
   const [sampleRootDirDraft, setSampleRootDirDraft] = useState(getInitialSampleRootDir);
+  const [sampleDirectoryHandle, setSampleDirectoryHandle] =
+    useState<FileSystemDirectoryHandle | null>(null);
+  const [isSelectingSampleDirectory, setIsSelectingSampleDirectory] = useState(false);
+  const [supportsDirectoryPicker] = useState(() => isDirectoryPickerSupported());
   const [isSampleRootDirPromptOpen, setIsSampleRootDirPromptOpen] = useState(
     () => !Boolean(getInitialSampleRootDir().trim())
   );
@@ -230,6 +244,7 @@ const DrumpadController = () => {
   const sampleBufferCacheRef = useRef<Map<string, AudioBuffer>>(new Map());
   const sampleBufferPendingRef = useRef<Map<string, Promise<AudioBuffer | null>>>(new Map());
   const importedSampleObjectUrlsRef = useRef<Set<string>>(new Set());
+  const localSampleObjectUrlsRef = useRef<Set<string>>(new Set());
   const activeBufferSourcesByPadRef = useRef<Map<number, ActiveOneShotVoice[]>>(new Map());
   const activeLoopBufferSourcesByPadRef = useRef<Map<number, ActiveLoopVoice>>(new Map());
   const previewBufferSourceRef = useRef<AudioBufferSourceNode | null>(null);
@@ -2923,10 +2938,22 @@ const DrumpadController = () => {
     });
   }, []);
 
+  const clearLocalSampleObjectUrls = useCallback(() => {
+    localSampleObjectUrlsRef.current.forEach((objectUrl) => {
+      window.URL.revokeObjectURL(objectUrl);
+    });
+    localSampleObjectUrlsRef.current.clear();
+  }, []);
+
   const handleLoadSampleAssets = useCallback(
-    async (rootDirOverride?: string): Promise<boolean> => {
+    async (
+      rootDirOverride?: string,
+      directoryHandleOverride?: FileSystemDirectoryHandle | null
+    ): Promise<boolean> => {
+      const resolvedDirectoryHandle = directoryHandleOverride ?? sampleDirectoryHandle;
       const normalizedRootDir = (rootDirOverride ?? sampleRootDir).trim();
-      if (!normalizedRootDir) {
+
+      if (!resolvedDirectoryHandle && !normalizedRootDir) {
         setSampleError("Set a sample folder path or import a project/kit to continue.");
         return false;
       }
@@ -2935,11 +2962,37 @@ const DrumpadController = () => {
       setSampleError(null);
 
       try {
+        if (resolvedDirectoryHandle) {
+          const hasPermission = await queryDirectoryReadPermission(resolvedDirectoryHandle);
+          if (!hasPermission) {
+            throw new Error(
+              "Sample folder access was revoked. Choose the folder again to continue."
+            );
+          }
+
+          const result = await scanDirectoryHandleForSamples(resolvedDirectoryHandle);
+          clearLocalSampleObjectUrls();
+          result.objectUrls.forEach((objectUrl) => {
+            localSampleObjectUrlsRef.current.add(objectUrl);
+          });
+          setSampleDirectoryHandle(resolvedDirectoryHandle);
+          setSampleRootDir(result.rootDir);
+          setSampleRootDirDraft(result.rootDir);
+          setSampleAssets(result.samples);
+          writePersistedSampleSoundsDir(result.rootDir);
+          sampleBufferCacheRef.current.clear();
+          sampleBufferPendingRef.current.clear();
+          return true;
+        }
+
         const result = await fetchSampleAssets({
           rootDir: normalizedRootDir,
         });
         const resolvedRootDir = (result.rootDir || normalizedRootDir).trim();
+        clearLocalSampleObjectUrls();
+        setSampleDirectoryHandle(null);
         setSampleRootDir(resolvedRootDir);
+        setSampleRootDirDraft(resolvedRootDir);
         setSampleAssets(result.samples);
         writePersistedSampleSoundsDir(resolvedRootDir);
         sampleBufferCacheRef.current.clear();
@@ -2952,13 +3005,17 @@ const DrumpadController = () => {
         setIsLoadingSampleAssets(false);
       }
     },
-    [sampleRootDir]
+    [clearLocalSampleObjectUrls, sampleDirectoryHandle, sampleRootDir]
   );
 
   const handleSampleRootDirChange = useCallback(
     (value: string) => {
       setSampleRootDir(value);
       setSampleRootDirDraft(value);
+      setSampleDirectoryHandle(null);
+      void clearPersistedDirectoryHandle().catch(() => {
+        // Ignore storage errors; path mode can still function.
+      });
       if (sampleError) {
         setSampleError(null);
       }
@@ -2976,7 +3033,55 @@ const DrumpadController = () => {
     [sampleError]
   );
 
+  const handleSelectSampleDirectory = useCallback(() => {
+    if (!supportsDirectoryPicker) {
+      return;
+    }
+
+    setIsSelectingSampleDirectory(true);
+    setSampleError(null);
+
+    void (async () => {
+      try {
+        const selectedDirectoryHandle = await openDirectoryPicker();
+        if (!selectedDirectoryHandle) {
+          return;
+        }
+
+        const hasPermission = await requestDirectoryReadPermission(selectedDirectoryHandle);
+        if (!hasPermission) {
+          setSampleError("Sample folder permission was not granted.");
+          return;
+        }
+
+        await writePersistedDirectoryHandle(selectedDirectoryHandle);
+        const rootDirLabel = selectedDirectoryHandle.name.trim() || "Selected Sample Folder";
+        setSampleDirectoryHandle(selectedDirectoryHandle);
+        setSampleRootDir(rootDirLabel);
+        setSampleRootDirDraft(rootDirLabel);
+        writePersistedSampleSoundsDir(rootDirLabel);
+        const didLoad = await handleLoadSampleAssets(undefined, selectedDirectoryHandle);
+        if (didLoad) {
+          setIsSampleRootDirPromptOpen(false);
+        }
+      } catch (error) {
+        setSampleError(error instanceof Error ? error.message : "Unable to access selected folder.");
+      } finally {
+        setIsSelectingSampleDirectory(false);
+      }
+    })();
+  }, [handleLoadSampleAssets, supportsDirectoryPicker]);
+
+  const handleRefreshSampleAssets = useCallback(() => {
+    void handleLoadSampleAssets();
+  }, [handleLoadSampleAssets]);
+
   const handleSubmitSampleRootDirPrompt = useCallback(() => {
+    if (supportsDirectoryPicker) {
+      handleSelectSampleDirectory();
+      return;
+    }
+
     const normalizedRootDir = sampleRootDirDraft.trim();
     if (!normalizedRootDir) {
       setSampleError("Enter a sample folder path, or import a project/kit.");
@@ -2990,7 +3095,7 @@ const DrumpadController = () => {
         setIsSampleRootDirPromptOpen(false);
       }
     })();
-  }, [handleLoadSampleAssets, sampleRootDirDraft]);
+  }, [handleLoadSampleAssets, handleSelectSampleDirectory, sampleRootDirDraft, supportsDirectoryPicker]);
 
   const handleSampleRootPromptProjectFileChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -3045,13 +3150,61 @@ const DrumpadController = () => {
   }, []);
 
   useEffect(() => {
-    const normalizedRootDir = sampleRootDir.trim();
-    if (!normalizedRootDir) {
-      setIsSampleRootDirPromptOpen(true);
-      return;
-    }
+    let cancelled = false;
 
-    void handleLoadSampleAssets(normalizedRootDir);
+    const bootstrapSampleSource = async () => {
+      if (supportsDirectoryPicker) {
+        const persistedDirectoryHandle = await readPersistedDirectoryHandle();
+        if (cancelled) {
+          return;
+        }
+
+        if (persistedDirectoryHandle) {
+          const hasPermission = await queryDirectoryReadPermission(persistedDirectoryHandle);
+          if (cancelled) {
+            return;
+          }
+
+          if (hasPermission) {
+            const rootDirLabel =
+              persistedDirectoryHandle.name.trim() || sampleRootDir.trim() || "Selected Sample Folder";
+            setSampleDirectoryHandle(persistedDirectoryHandle);
+            setSampleRootDir(rootDirLabel);
+            setSampleRootDirDraft(rootDirLabel);
+            writePersistedSampleSoundsDir(rootDirLabel);
+            const didLoad = await handleLoadSampleAssets(undefined, persistedDirectoryHandle);
+            if (!cancelled && !didLoad) {
+              setIsSampleRootDirPromptOpen(true);
+            }
+            return;
+          }
+
+          await clearPersistedDirectoryHandle().catch(() => {
+            // Ignore storage errors; user can re-select a folder.
+          });
+        }
+
+        setIsSampleRootDirPromptOpen(true);
+        return;
+      }
+
+      const normalizedRootDir = sampleRootDir.trim();
+      if (!normalizedRootDir) {
+        setIsSampleRootDirPromptOpen(true);
+        return;
+      }
+
+      const didLoad = await handleLoadSampleAssets(normalizedRootDir, null);
+      if (!didLoad) {
+        setIsSampleRootDirPromptOpen(true);
+      }
+    };
+
+    void bootstrapSampleSource();
+
+    return () => {
+      cancelled = true;
+    };
     // Intentional one-time initial bootstrap.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -3082,6 +3235,7 @@ const DrumpadController = () => {
       outputCompressorContextRef.current = null;
       reverbImpulseBufferRef.current = null;
       reverbImpulseBufferContextRef.current = null;
+      clearLocalSampleObjectUrls();
       importedSampleObjectUrlsRef.current.forEach((objectUrl) => {
         window.URL.revokeObjectURL(objectUrl);
       });
@@ -3092,6 +3246,7 @@ const DrumpadController = () => {
     stopAllLoopBufferSources,
     stopAllOneShotBufferSources,
     stopPreviewBufferSource,
+    clearLocalSampleObjectUrls,
   ]);
 
   return (
@@ -3165,6 +3320,7 @@ const DrumpadController = () => {
             </div>
             <SampleLibrarySidebar
               rootDir={sampleRootDir}
+              supportsDirectoryPicker={supportsDirectoryPicker}
               search={sampleSearch}
               isLoading={isLoadingSampleAssets}
               error={sampleError}
@@ -3172,8 +3328,9 @@ const DrumpadController = () => {
               filteredSampleCount={filteredSampleAssets.length}
               samples={filteredSampleAssets}
               onRootDirChange={handleSampleRootDirChange}
+              onPickDirectory={handleSelectSampleDirectory}
               onSearchChange={handleSampleSearchChange}
-              onRefreshSamples={handleLoadSampleAssets}
+              onRefreshSamples={handleRefreshSampleAssets}
               onPreviewSample={handlePreviewSample}
               onSaveSampleMetadata={handleSaveSampleMetadata}
               onResetSampleMetadata={handleResetSampleMetadata}
@@ -3327,28 +3484,44 @@ const DrumpadController = () => {
           <div className="w-full max-w-xl rounded-xl border border-[#a8aba5] bg-[#f6f5ef] p-5 shadow-2xl">
             <h4 className="text-[#515a6a] text-lg font-bold">Set Sample Folder</h4>
             <p className="text-xs text-[#666] mt-1">
-              Enter a local sample folder path, or import a project/kit without setting a folder.
+              {supportsDirectoryPicker
+                ? "Choose a local sample folder, or import a project/kit without selecting one."
+                : "Enter a local sample folder path, or import a project/kit without setting a folder."}
             </p>
-            <label className="mt-4 block text-[11px] font-bold text-[#515a6a]">SAMPLE FOLDER PATH</label>
-            <input
-              autoFocus
-              type="text"
-              value={sampleRootDirDraft}
-              onChange={(event) => {
-                setSampleRootDirDraft(event.target.value);
-                if (sampleError) {
-                  setSampleError(null);
-                }
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  handleSubmitSampleRootDirPrompt();
-                }
-              }}
-              placeholder="/path/to/samples"
-              className="mt-1 w-full rounded-md bg-[#fbfaf6] text-[#515a6a] text-sm px-3 py-2 border border-[#a8aba5] focus:outline-none focus:ring-2 focus:ring-[#ff8c2b]"
-            />
+            {supportsDirectoryPicker ? (
+              <div className="mt-4">
+                <label className="block text-[11px] font-bold text-[#515a6a]">SELECTED FOLDER</label>
+                <input
+                  type="text"
+                  value={sampleRootDir || "No folder selected"}
+                  readOnly
+                  className="mt-1 w-full rounded-md bg-[#fbfaf6] text-[#515a6a] text-sm px-3 py-2 border border-[#a8aba5]"
+                />
+              </div>
+            ) : (
+              <>
+                <label className="mt-4 block text-[11px] font-bold text-[#515a6a]">SAMPLE FOLDER PATH</label>
+                <input
+                  autoFocus
+                  type="text"
+                  value={sampleRootDirDraft}
+                  onChange={(event) => {
+                    setSampleRootDirDraft(event.target.value);
+                    if (sampleError) {
+                      setSampleError(null);
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      handleSubmitSampleRootDirPrompt();
+                    }
+                  }}
+                  placeholder="/path/to/samples"
+                  className="mt-1 w-full rounded-md bg-[#fbfaf6] text-[#515a6a] text-sm px-3 py-2 border border-[#a8aba5] focus:outline-none focus:ring-2 focus:ring-[#ff8c2b]"
+                />
+              </>
+            )}
             {sampleError ? <p className="mt-2 text-xs text-[#a6382f]">{sampleError}</p> : null}
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
               <button
@@ -3369,8 +3542,13 @@ const DrumpadController = () => {
                 type="button"
                 className="px-4 py-2 rounded-md text-xs font-bold bg-[#ff8c2b] hover:bg-[#ed7d1f] text-[#515a6a] border border-[#d66d14] transition-colors"
                 onClick={handleSubmitSampleRootDirPrompt}
+                disabled={isSelectingSampleDirectory}
               >
-                Load Samples
+                {supportsDirectoryPicker
+                  ? isSelectingSampleDirectory
+                    ? "Opening..."
+                    : "Choose Folder"
+                  : "Load Samples"}
               </button>
             </div>
           </div>

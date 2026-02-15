@@ -2,6 +2,7 @@ import type { SampleAsset, SampleMetadataOverride } from "../../integrations/sam
 
 export interface SampleLibrarySidebarProps {
   rootDir: string;
+  supportsDirectoryPicker: boolean;
   search: string;
   isLoading: boolean;
   error: string | null;
@@ -9,8 +10,9 @@ export interface SampleLibrarySidebarProps {
   filteredSampleCount: number;
   samples: SampleAsset[];
   onRootDirChange: (value: string) => void;
+  onPickDirectory: () => void;
   onSearchChange: (value: string) => void;
-  onRefreshSamples: (rootDirOverride?: string) => void;
+  onRefreshSamples: () => void;
   onPreviewSample: (sampleId: string) => void;
   onSaveSampleMetadata: (sampleId: string, metadata: SampleMetadataOverride) => void;
   onResetSampleMetadata: (sampleId: string) => void;

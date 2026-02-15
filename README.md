@@ -7,7 +7,7 @@ It loads audio samples from a local folder, lets you assign samples to pads, edi
 ## What It Does
 
 - 12 drum pads with keyboard triggers (`Q,W,E,R,A,S,D,F,Z,X,C,V`)
-- Sample browser with editable folder path, search/filter, lazy-loaded results, click-to-preview, drag-and-drop assignment, and metadata editing (name/category/tags)
+- Sample browser with local folder picker, search/filter, lazy-loaded results, click-to-preview, drag-and-drop assignment, and metadata editing (name/category/tags)
 - Per-pad controls for volume, polyphony, loop toggle, ADSR envelope, and FX (reverb/delay)
 - Step sequencer with per-row step editing, row mute, main clock selection (`1/4`, `1/8`, `1/16`, `1/32`), and pattern add/duplicate/delete/select
 - Quantized record-to-sequencer, plus row and full-pattern WAV export
@@ -16,12 +16,12 @@ It loads audio samples from a local folder, lets you assign samples to pads, edi
 
 ## First Launch Behavior
 
-On first app open, if no sample folder path is stored in local/session storage, a setup modal appears:
+On first app open, if no sample folder access is stored, a setup modal appears:
 
-- Enter a sample folder path and click **Load Samples**
+- Choose a local sample folder using the browser picker
 - Or skip folder setup and use **Import Project** / **Import Kit**
 
-If a valid sample folder path is already stored, the app loads samples from it automatically.
+If folder permission is still granted, the app restores it and loads samples automatically.
 
 ## Requirements
 
@@ -63,5 +63,6 @@ npm run typecheck
 ## Notes
 
 - Local sample scanning/streaming is provided by the Vite middleware in `vite.config.js`.
+- In supported browsers, local folder access can also use the File System Access API (`showDirectoryPicker`).
 - Supported audio extensions: `.wav`, `.mp3`, `.aiff`, `.aif`, `.flac`, `.ogg`, `.m4a`.
 - See `src/integrations/samples/README.md` for the sample endpoint contract.
