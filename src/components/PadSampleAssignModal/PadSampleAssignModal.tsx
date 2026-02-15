@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Search, X } from "lucide-react";
+import { Play, Search, X } from "lucide-react";
 import type { PadSampleAssignModalProps } from "./PadSampleAssignModal.types";
 import {
   DEFAULT_VISIBLE_SAMPLE_COUNT,
@@ -23,6 +23,7 @@ const PadSampleAssignModal = ({
   padName,
   samples,
   onClose,
+  onPreviewSample,
   onAssignSample,
 }: PadSampleAssignModalProps) => {
   const [query, setQuery] = useState("");
@@ -131,6 +132,9 @@ const PadSampleAssignModal = ({
           <div className="mt-2 text-[11px] text-[#666]">
             {filteredSamples.length} result{filteredSamples.length === 1 ? "" : "s"}
           </div>
+          <p className="mt-1 text-[11px] text-[#666]">
+            Click a sample row to assign it, or use the play button to preview.
+          </p>
 
           <div
             className={sampleListClassName}
@@ -150,22 +154,32 @@ const PadSampleAssignModal = ({
           >
             {visibleSamples.length > 0 ? (
               visibleSamples.map((sample) => (
-                <button
-                  key={sample.id}
-                  type="button"
-                  onClick={() => onAssignSample(sample.id)}
-                  className={sampleRowClassName}
-                >
+                <div key={sample.id} className={sampleRowClassName}>
                   <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => onAssignSample(sample.id)}
+                      className="min-w-0 flex-1 text-left"
+                    >
                       <div className="text-sm font-bold text-[#515a6a] truncate">{sample.name}</div>
                       <div className="mt-1 text-[11px] text-[#666] truncate">
                         {sample.relativePath || sample.id}
                       </div>
+                    </button>
+                    <div className="shrink-0 flex items-center gap-1.5">
+                      <span className={categoryBadgeClassName}>{sample.category}</span>
+                      <button
+                        type="button"
+                        onClick={() => onPreviewSample(sample.id)}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[#a8aba5] bg-[#ecebe6] text-[#515a6a] hover:bg-[#e2e0da] transition-colors"
+                        aria-label={`Preview ${sample.name}`}
+                        title="Preview sample"
+                      >
+                        <Play size={12} />
+                      </button>
                     </div>
-                    <span className={categoryBadgeClassName}>{sample.category}</span>
                   </div>
-                </button>
+                </div>
               ))
             ) : (
               <div className="rounded-md border border-dashed border-[#b8b5aa] bg-[#f6f5ef] px-3 py-4 text-center text-xs text-[#666]">

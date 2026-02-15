@@ -5,5 +5,6 @@ export interface PadSampleAssignModalProps {
   padName: string;
   samples: SampleAsset[];
   onClose: () => void;
+  onPreviewSample: (sampleId: string) => void;
   onAssignSample: (sampleId: string) => void;
 }

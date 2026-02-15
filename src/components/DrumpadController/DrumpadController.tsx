@@ -3375,6 +3375,7 @@ const DrumpadController = () => {
         padName={sampleAssignPad ? padNames[sampleAssignPad.id] ?? sampleAssignPad.label : ""}
         samples={effectiveSampleAssets}
         onClose={handleClosePadSampleAssignModal}
+        onPreviewSample={handlePreviewSample}
         onAssignSample={handleAssignSampleToSelectedPad}
       />
       <PadSampleEditorModal
