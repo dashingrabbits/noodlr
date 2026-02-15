@@ -1,5 +1,9 @@
 # Noodlr
 
+## Webapp
+
+http://noodlon.netlify.app
+
 A browser-based drum sampler + step sequencer built with React, TypeScript, Vite, and Tailwind.
 
 It loads audio samples from a local folder, lets you assign samples to pads, edit pad sound settings (ADSR + FX), sequence patterns, and save or transfer kits/projects.
