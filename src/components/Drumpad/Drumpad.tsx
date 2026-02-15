@@ -1,11 +1,13 @@
 import { memo, useState } from "react";
-import { SlidersHorizontal } from "lucide-react";
+import { Plus, SlidersHorizontal } from "lucide-react";
 import type { DrumpadProps } from "./Drumpad.types";
 import { resolvePadDisplayName } from "./Drumpad.utilities";
 import { SAMPLE_DRAG_DATA_MIME_TYPE } from "../SampleLibrarySidebar/SampleLibrarySidebar.utilities";
 import {
   containerClassName,
   dropHintClassName,
+  emptyPadIndicatorClassName,
+  emptyPadPlusBadgeClassName,
   getPadButtonClassName,
   editSampleButtonClassName,
   padSummaryClassName,
@@ -20,9 +22,12 @@ const Drumpad = memo(({
   onPadButtonMount,
   onPadPress,
   onPadSampleDrop,
+  onOpenPadSampleAssignModal,
   onOpenPadSampleEditor,
 }: DrumpadProps) => {
   const [isDropTarget, setIsDropTarget] = useState(false);
+  const hasAssignedSample = Boolean(assignedSampleName.trim());
+  const displayPadName = resolvePadDisplayName(pad.label, name);
 
   return (
     <div className={containerClassName}>
@@ -40,7 +45,12 @@ const Drumpad = memo(({
           ref={(buttonElement) => onPadButtonMount(pad.id, buttonElement)}
           onPointerDown={(event) => {
             event.preventDefault();
-            onPadPress(pad.id);
+            if (hasAssignedSample) {
+              onPadPress(pad.id);
+              return;
+            }
+
+            onOpenPadSampleAssignModal(pad.id);
           }}
           onDragOver={(event) => {
             event.preventDefault();
@@ -62,10 +72,26 @@ const Drumpad = memo(({
           }}
           className={getPadButtonClassName(pad.color)}
         >
-          <div className="text-base sm:text-2xl mb-0 sm:mb-1">{resolvePadDisplayName(pad.label, name)}</div>
-          <div className="text-[10px] sm:text-sm opacity-80">{pad.key}</div>
+          <div className="absolute left-2 top-2 sm:left-3 sm:top-3 text-[10px] sm:text-xs tracking-[0.08em]">
+            {displayPadName}
+          </div>
+          <div className="absolute right-2 top-2 sm:right-3 sm:top-3 text-[10px] sm:text-xs opacity-80">
+            {pad.key}
+          </div>
+          {hasAssignedSample ? (
+            <div className="max-w-[85%] text-xs sm:text-base text-center px-2 truncate">
+              {assignedSampleName}
+            </div>
+          ) : (
+            <div className={emptyPadIndicatorClassName}>
+              <span className={emptyPadPlusBadgeClassName}>
+                <Plus size={18} />
+              </span>
+              <span className="text-[10px] sm:text-xs font-bold tracking-[0.08em]">ADD SAMPLE</span>
+            </div>
+          )}
           <div className="absolute inset-x-1 bottom-1 flex items-center justify-between gap-1 sm:hidden text-[8px] font-semibold">
-            <span className="truncate text-[#515a6a]/90">{assignedSampleName || "No sample"}</span>
+            <span className="truncate text-[#515a6a]/90">{assignedSampleName || "Tap + to assign"}</span>
             <span className="shrink-0 text-[#515a6a]/90">P{polyphony}</span>
           </div>
         </button>

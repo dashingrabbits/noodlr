@@ -7,6 +7,10 @@ export const editSampleButtonClassName =
   "absolute right-1.5 top-1.5 z-10 inline-flex h-6 w-6 sm:h-8 sm:w-8 items-center justify-center rounded-md border border-[#8e928f] bg-[#d7d8d1] text-[#515a6a] transition-colors hover:bg-[#c8c9c2] disabled:cursor-not-allowed disabled:opacity-40";
 export const padSummaryClassName =
   "hidden sm:flex mt-3 items-center justify-between gap-2 rounded-md border border-[#b8b5aa] bg-[#f6f5ef] px-3 py-2";
+export const emptyPadIndicatorClassName =
+  "absolute inset-0 flex flex-col items-center justify-center gap-1 text-[#515a6a]";
+export const emptyPadPlusBadgeClassName =
+  "inline-flex h-9 w-9 sm:h-11 sm:w-11 items-center justify-center rounded-full border border-[#8e928f] bg-[#f6f5ef]/90 shadow-sm cursor-pointer";
 
 export const getPadButtonClassName = (color: string): string => {
   return `relative w-full aspect-square rounded-lg sm:rounded-xl touch-none select-none ${color} hover:brightness-105 transition-all transform hover:scale-[1.02] active:scale-95 flex flex-col items-center justify-center text-[#515a6a] font-bold text-xs sm:text-lg shadow-md border border-[#9fa39c]`;

@@ -6,6 +6,7 @@ import KitManager from "../KitManager/KitManager";
 import MasterControls from "../MasterControls/MasterControls";
 import type { ProjectOption } from "../MasterControls/MasterControls.types";
 import PadSampleEditorModal from "../PadSampleEditorModal/PadSampleEditorModal";
+import PadSampleAssignModal from "../PadSampleAssignModal/PadSampleAssignModal";
 import SampleLibrarySidebar from "../SampleLibrarySidebar/SampleLibrarySidebar";
 import StepSequencer from "../StepSequencer/StepSequencer";
 import {
@@ -219,6 +220,7 @@ const DrumpadController = () => {
     readSavedProjectsFromSession()
   );
   const [editingPadId, setEditingPadId] = useState<number | null>(null);
+  const [sampleAssignPadId, setSampleAssignPadId] = useState<number | null>(null);
   const [padEditorSaveMessage, setPadEditorSaveMessage] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [isSaveProjectModalOpen, setIsSaveProjectModalOpen] = useState(false);
@@ -354,6 +356,14 @@ const DrumpadController = () => {
 
     return DRUM_PADS.find((pad) => pad.id === editingPadId) ?? null;
   }, [editingPadId]);
+
+  const sampleAssignPad = useMemo(() => {
+    if (sampleAssignPadId === null) {
+      return null;
+    }
+
+    return DRUM_PADS.find((pad) => pad.id === sampleAssignPadId) ?? null;
+  }, [sampleAssignPadId]);
 
   const editingPadSampleId = useMemo(() => {
     if (!editingPad) {
@@ -1644,6 +1654,7 @@ const DrumpadController = () => {
     setSelectedProjectId("");
     setPadEditorSaveMessage("");
     setEditingPadId(null);
+    setSampleAssignPadId(null);
     setProjectNameDraft("");
     setIsSaveProjectModalOpen(false);
   };
@@ -2748,6 +2759,14 @@ const DrumpadController = () => {
     setEditingPadId(padId);
   }, []);
 
+  const handleOpenPadSampleAssignModal = useCallback((padId: number) => {
+    setSampleAssignPadId(padId);
+  }, []);
+
+  const handleClosePadSampleAssignModal = useCallback(() => {
+    setSampleAssignPadId(null);
+  }, []);
+
   const handlePadSampleEditorOpenChange = useCallback((isOpen: boolean) => {
     if (!isOpen) {
       setPadEditorSaveMessage("");
@@ -2846,6 +2865,18 @@ const DrumpadController = () => {
       });
     },
     [ensureSampleBuffer, sampleAssetsById, stopLoopBufferSourceForPad]
+  );
+
+  const handleAssignSampleToSelectedPad = useCallback(
+    (sampleId: string) => {
+      if (sampleAssignPadId === null) {
+        return;
+      }
+
+      handlePadSampleDrop(sampleAssignPadId, sampleId);
+      setSampleAssignPadId(null);
+    },
+    [handlePadSampleDrop, sampleAssignPadId]
   );
 
   const handlePadSampleClear = useCallback((padId: number) => {
@@ -3315,6 +3346,7 @@ const DrumpadController = () => {
                 onPadButtonMount={handlePadButtonMount}
                 onPadPress={handlePadPress}
                 onPadSampleDrop={handlePadSampleDrop}
+                onOpenPadSampleAssignModal={handleOpenPadSampleAssignModal}
                 onOpenPadSampleEditor={handleOpenPadSampleEditor}
               />
             </div>
@@ -3338,6 +3370,13 @@ const DrumpadController = () => {
           </div>
         </div>
       </div>
+      <PadSampleAssignModal
+        isOpen={Boolean(sampleAssignPad)}
+        padName={sampleAssignPad ? padNames[sampleAssignPad.id] ?? sampleAssignPad.label : ""}
+        samples={effectiveSampleAssets}
+        onClose={handleClosePadSampleAssignModal}
+        onAssignSample={handleAssignSampleToSelectedPad}
+      />
       <PadSampleEditorModal
         isOpen={Boolean(editingPad)}
         padName={editingPad ? padNames[editingPad.id] ?? editingPad.label : ""}

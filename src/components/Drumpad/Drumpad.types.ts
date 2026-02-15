@@ -9,5 +9,6 @@ export interface DrumpadProps {
   onPadButtonMount: (padId: number, buttonElement: HTMLButtonElement | null) => void;
   onPadPress: (padId: number) => void;
   onPadSampleDrop: (padId: number, sampleId: string) => void;
+  onOpenPadSampleAssignModal: (padId: number) => void;
   onOpenPadSampleEditor: (padId: number) => void;
 }

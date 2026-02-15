@@ -13,6 +13,7 @@ const DrumpadGrid = ({
   onPadButtonMount,
   onPadPress,
   onPadSampleDrop,
+  onOpenPadSampleAssignModal,
   onOpenPadSampleEditor,
 }: DrumpadGridProps) => {
   return (
@@ -28,6 +29,7 @@ const DrumpadGrid = ({
           onPadButtonMount={onPadButtonMount}
           onPadPress={onPadPress}
           onPadSampleDrop={onPadSampleDrop}
+          onOpenPadSampleAssignModal={onOpenPadSampleAssignModal}
           onOpenPadSampleEditor={onOpenPadSampleEditor}
         />
       ))}
