@@ -1,0 +1,38 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700;800&display=swap");
+@import "tailwindcss";
+
+:root {
+  font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #dddcd4;
+  color: #141414;
+}
+
+.slider::-webkit-slider-thumb {
+  appearance: none;
+  height: 20px;
+  width: 20px;
+  border-radius: 50%;
+  border: 2px solid #151515;
+  background: #faf9f5;
+  cursor: pointer;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+}
+
+.slider-small::-webkit-slider-thumb {
+  appearance: none;
+  height: 16px;
+  width: 16px;
+  border-radius: 50%;
+  border: 2px solid #151515;
+  background: #faf9f5;
+  cursor: pointer;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+}
