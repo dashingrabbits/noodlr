@@ -2,7 +2,7 @@
 
 ## Webapp
 
-http://noodlon.netlify.app
+https://noodlon.netlify.app
 
 A browser-based drum sampler + step sequencer built with React, TypeScript, Vite, and Tailwind.
 
