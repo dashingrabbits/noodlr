@@ -335,6 +335,7 @@ const DrumpadController = () => {
   const scheduledTickVisualTimeoutsRef = useRef<number[]>([]);
   const padButtonElementsRef = useRef<Map<number, HTMLButtonElement>>(new Map());
   const padFlashTimeoutsRef = useRef<Map<number, number>>(new Map());
+  const hasUnlockedAudioRef = useRef(false);
   const sampleRootPromptProjectInputRef = useRef<HTMLInputElement | null>(null);
   const sampleRootPromptKitInputRef = useRef<HTMLInputElement | null>(null);
   const { heldTransposeSemitoneOffset, getCurrentTransposeSemitoneOffset } =
@@ -725,6 +726,68 @@ const DrumpadController = () => {
     return context;
   }, [getAudioContext]);
 
+  const unlockAudioContext = useCallback(async (): Promise<boolean> => {
+    const context = getAudioContext();
+    if (!context) {
+      return false;
+    }
+
+    try {
+      if (context.state === "suspended") {
+        await context.resume();
+      }
+
+      if (context.state !== "running") {
+        return false;
+      }
+
+      if (!hasUnlockedAudioRef.current) {
+        const unlockSource = context.createBufferSource();
+        unlockSource.buffer = context.createBuffer(1, 1, context.sampleRate);
+        unlockSource.connect(context.destination);
+        unlockSource.start(0);
+        hasUnlockedAudioRef.current = true;
+      }
+
+      return true;
+    } catch {
+      return false;
+    }
+  }, [getAudioContext]);
+
+  const decodeAudioDataCompat = useCallback(
+    (context: AudioContext, arrayBuffer: ArrayBuffer): Promise<AudioBuffer> => {
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const resolveOnce = (value: AudioBuffer) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          resolve(value);
+        };
+        const rejectOnce = (error: unknown) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          reject(error);
+        };
+
+        const maybePromise = context.decodeAudioData(
+          arrayBuffer,
+          (decodedBuffer) => resolveOnce(decodedBuffer),
+          (error) => rejectOnce(error ?? new Error("Unable to decode sample audio."))
+        ) as Promise<AudioBuffer> | void;
+
+        if (maybePromise && typeof maybePromise.then === "function") {
+          maybePromise.then(resolveOnce).catch(rejectOnce);
+        }
+      });
+    },
+    []
+  );
+
   const resumeAudioContextIfNeeded = useCallback((context: AudioContext) => {
     if (context.state === "running") {
       return;
@@ -868,7 +931,7 @@ const DrumpadController = () => {
         }
 
         const arrayBuffer = await response.arrayBuffer();
-        const decodedBuffer = await context.decodeAudioData(arrayBuffer.slice(0));
+        const decodedBuffer = await decodeAudioDataCompat(context, arrayBuffer.slice(0));
         sampleBufferCacheRef.current.set(sample.id, decodedBuffer);
         return decodedBuffer;
       })();
@@ -881,7 +944,7 @@ const DrumpadController = () => {
         sampleBufferPendingRef.current.delete(sample.id);
       }
     },
-    [ensureAudioContextReady]
+    [decodeAudioDataCompat, ensureAudioContextReady]
   );
 
   const playBufferSource = useCallback(
@@ -1436,6 +1499,7 @@ const DrumpadController = () => {
       }
 
       void (async () => {
+        await unlockAudioContext();
         const context = await ensureAudioContextReady();
         if (!context) {
           return;
@@ -1477,6 +1541,7 @@ const DrumpadController = () => {
       masterVolume,
       sampleAssetsById,
       stopPreviewBufferSource,
+      unlockAudioContext,
     ]
   );
 
@@ -1515,13 +1580,16 @@ const DrumpadController = () => {
 
   const handlePadPress = useCallback(
     (padId: number, transposeSemitoneOffset = 0) => {
+      void unlockAudioContext();
       flashPadVisual(padId);
       playAssignedSample(padId, undefined, transposeSemitoneOffset);
     },
-    [flashPadVisual, playAssignedSample]
+    [flashPadVisual, playAssignedSample, unlockAudioContext]
   );
 
   const handleTogglePlayback = useCallback(() => {
+    void unlockAudioContext();
+
     if (isCountInActiveRef.current) {
       cancelCountIn();
       return;
@@ -1553,6 +1621,7 @@ const DrumpadController = () => {
     stopAllLoopBufferSources,
     stopAllOneShotBufferSources,
     stopPreviewBufferSource,
+    unlockAudioContext,
   ]);
 
   const handleAddSequencerPattern = useCallback(() => {
@@ -1838,6 +1907,22 @@ const DrumpadController = () => {
     },
     [sequencerEngineStepLength]
   );
+
+  useEffect(() => {
+    const handleGestureUnlock = () => {
+      void unlockAudioContext();
+    };
+
+    window.addEventListener("touchstart", handleGestureUnlock, { passive: true });
+    window.addEventListener("pointerdown", handleGestureUnlock, { passive: true });
+    window.addEventListener("keydown", handleGestureUnlock);
+
+    return () => {
+      window.removeEventListener("touchstart", handleGestureUnlock);
+      window.removeEventListener("pointerdown", handleGestureUnlock);
+      window.removeEventListener("keydown", handleGestureUnlock);
+    };
+  }, [unlockAudioContext]);
 
   useEffect(() => {
     if (!isPlaying) {
