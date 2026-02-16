@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, Circle, Copy, Download, Play, Plus, Square, Trash2, Volume2, VolumeX } from "lucide-react";
 import type { StepSequencerProps } from "./StepSequencer.types";
 import {
   createStepIndexArray,
   getStepLengthTickMultiplier,
-  KEYBOARD_HINT_TEXT,
   MAX_SEQUENCER_BPM,
   MIN_SEQUENCER_BPM,
   ROW_SEQUENCER_STEP_LENGTH_OPTIONS,
@@ -28,6 +27,10 @@ import {
   rowGridClassName,
   rowStepsScrollerClassName,
 } from "./StepSequencer.styles";
+import {
+  formatSemitoneOffsetAsOctaves,
+  OCTAVE_TRANSPOSE_SEMITONES,
+} from "../KeyboardTranspose/KeyboardTranspose.utilities";
 
 const StepSequencer = ({
   patterns,
@@ -36,6 +39,7 @@ const StepSequencer = ({
   currentTick,
   isPlaying,
   isRecording,
+  getCurrentTransposeSemitoneOffset,
   bpm,
   clockStepLength,
   engineStepLength,
@@ -60,11 +64,13 @@ const StepSequencer = ({
   const [exportMessage, setExportMessage] = useState("");
   const [isExpanded, setIsExpanded] = useState(false);
   const [bpmInputValue, setBpmInputValue] = useState(() => String(bpm));
+  const dragTransposeSemitoneOffsetRef = useRef<number | null>(null);
   const canDeletePattern = patterns.length > 1;
 
   const endDragSelection = useCallback(() => {
     setIsDragging(false);
     setDragPadId(null);
+    dragTransposeSemitoneOffsetRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -312,6 +318,11 @@ const StepSequencer = ({
                 <div className={rowGridClassName} style={{ gridTemplateColumns: `repeat(${STEPS_IN_SEQUENCE}, minmax(0, 1fr))` }}>
                   {createStepIndexArray(STEPS_IN_SEQUENCE).map((stepIndex) => {
                     const isEnabled = row.steps[stepIndex] ?? false;
+                    const stepOctaveSemitoneOffset = row.stepOctaves[stepIndex] ?? 0;
+                    const stepOctaveLabel = formatSemitoneOffsetAsOctaves(
+                      stepOctaveSemitoneOffset,
+                      OCTAVE_TRANSPOSE_SEMITONES
+                    );
                     const isCurrentStep =
                       stepIndex ===
                       (Math.floor(
@@ -329,8 +340,17 @@ const StepSequencer = ({
                           }
 
                           event.preventDefault();
+                          const transposeSemitoneOffset = getCurrentTransposeSemitoneOffset(
+                            event.shiftKey
+                          );
                           setIsDragging(true);
                           setDragPadId(row.padId);
+                          dragTransposeSemitoneOffsetRef.current =
+                            transposeSemitoneOffset !== 0 ? transposeSemitoneOffset : null;
+                          if (transposeSemitoneOffset !== 0) {
+                            onStepSet(row.padId, stepIndex, true, transposeSemitoneOffset);
+                            return;
+                          }
                           onStepToggle(row.padId, stepIndex);
                         }}
                         onMouseEnter={() => {
@@ -338,12 +358,29 @@ const StepSequencer = ({
                             return;
                           }
 
-                          onStepSet(row.padId, stepIndex, true);
+                          onStepSet(
+                            row.padId,
+                            stepIndex,
+                            true,
+                            dragTransposeSemitoneOffsetRef.current ?? undefined
+                          );
                         }}
                         onMouseUp={endDragSelection}
                         className={getStepCellClassName(isEnabled, isCurrentStep, isPlaying)}
-                        aria-label={`Pad ${row.padLabel} step ${stepIndex + 1}`}
+                        aria-label={`Pad ${row.padLabel} step ${stepIndex + 1}${
+                          stepOctaveLabel ? ` octave ${stepOctaveLabel}` : ""
+                        }`}
+                        title={
+                          isEnabled
+                            ? "Click to toggle. Hold 1-9 while clicking to set octave. Hold Shift for negative octave."
+                            : "Click to enable step."
+                        }
                       >
+                        {stepOctaveLabel ? (
+                          <span className="absolute top-0.5 left-0.5 text-[7px] leading-none font-bold text-[#515a6a]">
+                            {stepOctaveLabel}
+                          </span>
+                        ) : null}
                         <span
                           className={`hidden sm:inline text-[8px] font-semibold ${
                             isEnabled || (isCurrentStep && isPlaying)
@@ -363,12 +400,9 @@ const StepSequencer = ({
         )}
       </div>
 
-      <div className="text-center mt-3">
-        {exportMessage ? (
-          <div className="text-[11px] text-[#545454] mb-1">{exportMessage}</div>
-        ) : null}
-        <div className="text-[#5c6270] text-xs font-medium">{KEYBOARD_HINT_TEXT}</div>
-      </div>
+      {exportMessage ? (
+        <div className="text-center mt-3 text-[11px] text-[#545454]">{exportMessage}</div>
+      ) : null}
         </>
       ) : (
         <div className="text-xs text-[#525252] border border-dashed border-[#b8b5aa] rounded-md px-3 py-2 bg-[#f7f6f2]">

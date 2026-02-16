@@ -15,6 +15,7 @@ import {
   createEmptyStepSequence,
   DEFAULT_SEQUENCER_BPM,
   DEFAULT_ROW_STEP_LENGTH,
+  KEYBOARD_HINT_TEXT,
   getStepLengthTickMultiplier,
   getShortestStepLength,
   getSequencerStepDurationMs,
@@ -32,6 +33,7 @@ import type {
   PadRowMuted,
   PadSampleSettings,
   PadSampleSettingsMap,
+  PadStepOctaves,
   PadStepLength,
   PadStepSequence,
   PadSampleIds,
@@ -45,6 +47,7 @@ import {
   createInitialPadRowMuted,
   createInitialPadNames,
   createInitialPadSampleSettings,
+  createInitialPadStepOctaves,
   createInitialPadStepLength,
   createInitialPadStepSequence,
   createInitialPadVolumes,
@@ -58,6 +61,14 @@ import {
   readPersistedSampleSoundsDir,
   writePersistedSampleSoundsDir,
 } from "./DrumpadController.utilities";
+import { useKeyboardTransposeHotkeys } from "../KeyboardTranspose/KeyboardTranspose.hooks";
+import {
+  formatSemitoneOffsetAsOctaves,
+  normalizeTransposeSemitoneOffset,
+  OCTAVE_TRANSPOSE_SEMITONES,
+  MAX_TRANSPOSE_STEP_DIGIT,
+  TRANSPOSE_STEP_SEMITONES,
+} from "../KeyboardTranspose/KeyboardTranspose.utilities";
 import { fetchSampleAssets } from "../../integrations/samples/sample.client";
 import {
   clearPersistedDirectoryHandle,
@@ -119,6 +130,7 @@ const IMPORTED_SAMPLE_ID_PREFIX = "imported";
 const IMPORTED_PROJECT_SAMPLE_ID_PREFIX = "imported-project";
 const PROJECT_ARCHIVE_ACCEPT = ".zip,.noodlr-project.zip,application/zip";
 const KIT_ARCHIVE_ACCEPT = ".zip,.noodlr-kit.zip,application/zip";
+const EMPTY_STEP_OCTAVE_SEQUENCE = Array.from({ length: STEPS_IN_SEQUENCE }, () => 0);
 
 type ActiveOneShotVoice = {
   source: AudioBufferSourceNode;
@@ -144,8 +156,22 @@ const clonePadStepSequence = (padStepSequence: PadStepSequence): PadStepSequence
   ) as PadStepSequence;
 };
 
+const clonePadStepOctaves = (padStepOctaves: PadStepOctaves): PadStepOctaves => {
+  return Object.fromEntries(
+    Object.entries(padStepOctaves).map(([padId, stepOctaves]) => [padId, [...stepOctaves]])
+  ) as PadStepOctaves;
+};
+
 const clonePadStepLength = (padStepLength: PadStepLength): PadStepLength => {
   return { ...padStepLength };
+};
+
+const getNormalizedStepOctaveSemitoneOffset = (candidateValue: unknown): number => {
+  return normalizeTransposeSemitoneOffset(
+    candidateValue,
+    TRANSPOSE_STEP_SEMITONES,
+    MAX_TRANSPOSE_STEP_DIGIT
+  );
 };
 
 const createDefaultSequencerPattern = (): SequencerPattern => {
@@ -153,6 +179,7 @@ const createDefaultSequencerPattern = (): SequencerPattern => {
     id: createSavedKitId(),
     name: "Pattern 1",
     padStepSequence: createInitialPadStepSequence(DRUM_PADS, STEPS_IN_SEQUENCE),
+    padStepOctaves: createInitialPadStepOctaves(DRUM_PADS, STEPS_IN_SEQUENCE),
     padStepLength: createInitialPadStepLength(DRUM_PADS, DEFAULT_ROW_STEP_LENGTH),
   };
 };
@@ -200,6 +227,9 @@ const DrumpadController = () => {
   const [padSampleSettings, setPadSampleSettings] = useState<PadSampleSettingsMap>({});
   const [padStepSequence, setPadStepSequence] = useState<PadStepSequence>(() =>
     clonePadStepSequence(initialPattern.padStepSequence)
+  );
+  const [padStepOctaves, setPadStepOctaves] = useState<PadStepOctaves>(() =>
+    clonePadStepOctaves(initialPattern.padStepOctaves)
   );
   const [padStepLength, setPadStepLength] = useState<PadStepLength>(() =>
     clonePadStepLength(initialPattern.padStepLength)
@@ -254,13 +284,16 @@ const DrumpadController = () => {
   const outputCompressorContextRef = useRef<AudioContext | null>(null);
   const reverbImpulseBufferRef = useRef<AudioBuffer | null>(null);
   const reverbImpulseBufferContextRef = useRef<AudioContext | null>(null);
-  const playAssignedSampleRef = useRef<(padId: number, scheduledTime?: number) => void>(() => {});
+  const playAssignedSampleRef = useRef<
+    (padId: number, scheduledTime?: number, transposeSemitoneOffset?: number) => void
+  >(() => {});
   const isPlayingRef = useRef(false);
   const padLoopEnabledRef = useRef<PadLoopEnabled>({});
   const padRowMutedRef = useRef<PadRowMuted>({});
   const padSampleSettingsRef = useRef<PadSampleSettingsMap>({});
   const padSampleIdsRef = useRef<PadSampleIds>({});
   const padStepSequenceRef = useRef<PadStepSequence>({});
+  const padStepOctavesRef = useRef<PadStepOctaves>({});
   const padStepLengthRef = useRef<PadStepLength>({});
   const currentTickRef = useRef(0);
   const scheduledTickVisualTimeoutsRef = useRef<number[]>([]);
@@ -268,6 +301,12 @@ const DrumpadController = () => {
   const padFlashTimeoutsRef = useRef<Map<number, number>>(new Map());
   const sampleRootPromptProjectInputRef = useRef<HTMLInputElement | null>(null);
   const sampleRootPromptKitInputRef = useRef<HTMLInputElement | null>(null);
+  const { heldTransposeSemitoneOffset, getCurrentTransposeSemitoneOffset } =
+    useKeyboardTransposeHotkeys({
+      isEditableEventTarget,
+      maxTransposeSteps: MAX_TRANSPOSE_STEP_DIGIT,
+      transposeStepSemitones: TRANSPOSE_STEP_SEMITONES,
+    });
 
   const keyboardPadMap = useMemo(() => createKeyboardPadMap(DRUM_PADS), []);
   const combinedSampleAssets = useMemo(
@@ -297,6 +336,14 @@ const DrumpadController = () => {
     );
   }, [effectiveSampleAssets, sampleSearch]);
 
+  const heldTransposeOctaveOffsetLabel = useMemo(() => {
+    const formattedOffset = formatSemitoneOffsetAsOctaves(
+      heldTransposeSemitoneOffset,
+      OCTAVE_TRANSPOSE_SEMITONES
+    );
+    return formattedOffset ? `${formattedOffset} oct` : "Off";
+  }, [heldTransposeSemitoneOffset]);
+
   const padAssignedSamples = useMemo<PadAssignedSamples>(() => {
     const assignments: PadAssignedSamples = {};
     Object.entries(padSampleIds).forEach(([padIdRaw, sampleId]) => {
@@ -315,8 +362,9 @@ const DrumpadController = () => {
       isMuted: padRowMuted[pad.id] ?? false,
       stepLength: (padStepLength[pad.id] ?? DEFAULT_ROW_STEP_LENGTH) as SequencerStepLength,
       steps: padStepSequence[pad.id] ?? createEmptyStepSequence(STEPS_IN_SEQUENCE),
+      stepOctaves: padStepOctaves[pad.id] ?? EMPTY_STEP_OCTAVE_SEQUENCE,
     }));
-  }, [padAssignedSamples, padNames, padRowMuted, padStepLength, padStepSequence]);
+  }, [padAssignedSamples, padNames, padRowMuted, padStepLength, padStepOctaves, padStepSequence]);
 
   const sequencerEngineStepLength = useMemo(() => {
     const rowStepLengths = sequencerRows.map((row) => row.stepLength);
@@ -378,6 +426,7 @@ const DrumpadController = () => {
   padSampleSettingsRef.current = padSampleSettings;
   padSampleIdsRef.current = padSampleIds;
   padStepSequenceRef.current = padStepSequence;
+  padStepOctavesRef.current = padStepOctaves;
   padStepLengthRef.current = padStepLength;
   currentTickRef.current = currentStep;
   isPlayingRef.current = isPlaying;
@@ -390,6 +439,7 @@ const DrumpadController = () => {
     setPadRowMuted(createInitialPadRowMuted(DRUM_PADS));
     setPadSampleSettings(createInitialPadSampleSettings(DRUM_PADS));
     setPadStepSequence(createInitialPadStepSequence(DRUM_PADS, STEPS_IN_SEQUENCE));
+    setPadStepOctaves(createInitialPadStepOctaves(DRUM_PADS, STEPS_IN_SEQUENCE));
     setPadStepLength(createInitialPadStepLength(DRUM_PADS, DEFAULT_ROW_STEP_LENGTH));
   }, []);
 
@@ -404,12 +454,13 @@ const DrumpadController = () => {
           ? {
               ...pattern,
               padStepSequence: clonePadStepSequence(padStepSequence),
+              padStepOctaves: clonePadStepOctaves(padStepOctaves),
               padStepLength: clonePadStepLength(padStepLength),
             }
           : pattern
       )
     );
-  }, [activePatternId, padStepLength, padStepSequence]);
+  }, [activePatternId, padStepLength, padStepOctaves, padStepSequence]);
 
   useEffect(() => {
     if (!sequencerPatterns.length) {
@@ -424,6 +475,7 @@ const DrumpadController = () => {
     const fallbackPattern = sequencerPatterns[0];
     setActivePatternId(fallbackPattern.id);
     setPadStepSequence(clonePadStepSequence(fallbackPattern.padStepSequence));
+    setPadStepOctaves(clonePadStepOctaves(fallbackPattern.padStepOctaves));
     setPadStepLength(clonePadStepLength(fallbackPattern.padStepLength));
   }, [activePatternId, sequencerPatterns]);
 
@@ -467,10 +519,12 @@ const DrumpadController = () => {
         ])
       ) as PadSampleSettingsMap,
       padStepSequence: clonePadStepSequence(padStepSequence),
+      padStepOctaves: clonePadStepOctaves(padStepOctaves),
       padStepLength: clonePadStepLength(padStepLength),
       sequencerPatterns: sequencerPatterns.map((pattern) => ({
         ...pattern,
         padStepSequence: clonePadStepSequence(pattern.padStepSequence),
+        padStepOctaves: clonePadStepOctaves(pattern.padStepOctaves),
         padStepLength: clonePadStepLength(pattern.padStepLength),
       })),
       activePatternId,
@@ -487,6 +541,7 @@ const DrumpadController = () => {
     padSampleSettings,
     padSampleIds,
     padStepLength,
+    padStepOctaves,
     padStepSequence,
     padVolumes,
     sequencerBpm,
@@ -506,6 +561,23 @@ const DrumpadController = () => {
 
       defaults[pad.id] = Array.from({ length: STEPS_IN_SEQUENCE }, (_, index) =>
         Boolean(candidateSteps[index])
+      );
+    });
+
+    return defaults;
+  }, []);
+
+  const normalizePadStepOctaves = useCallback((candidate: PadStepOctaves): PadStepOctaves => {
+    const defaults = createInitialPadStepOctaves(DRUM_PADS, STEPS_IN_SEQUENCE);
+
+    DRUM_PADS.forEach((pad) => {
+      const candidateStepOctaves = candidate[pad.id];
+      if (!Array.isArray(candidateStepOctaves)) {
+        return;
+      }
+
+      defaults[pad.id] = Array.from({ length: STEPS_IN_SEQUENCE }, (_, index) =>
+        getNormalizedStepOctaveSemitoneOffset(candidateStepOctaves[index])
       );
     });
 
@@ -566,6 +638,9 @@ const DrumpadController = () => {
             padStepSequence: normalizePadStepSequence(
               (patternRecord.padStepSequence as PadStepSequence) ?? ({} as PadStepSequence)
             ),
+            padStepOctaves: normalizePadStepOctaves(
+              (patternRecord.padStepOctaves as PadStepOctaves) ?? ({} as PadStepOctaves)
+            ),
             padStepLength: normalizePadStepLength(
               (patternRecord.padStepLength as PadStepLength) ?? ({} as PadStepLength)
             ),
@@ -575,7 +650,7 @@ const DrumpadController = () => {
 
       return normalizedPatterns;
     },
-    [normalizePadStepLength, normalizePadStepSequence]
+    [normalizePadStepLength, normalizePadStepOctaves, normalizePadStepSequence]
   );
 
   const getAudioContext = useCallback((): AudioContext | null => {
@@ -777,7 +852,8 @@ const DrumpadController = () => {
       maxVoices: number,
       sampleSettings: PadSampleSettings,
       outputGain: number,
-      startTime?: number
+      startTime?: number,
+      transposeSemitoneOffset = 0
     ) => {
       const activeVoices = activeBufferSourcesByPadRef.current.get(padId) ?? [];
       while (activeVoices.length >= maxVoices) {
@@ -805,6 +881,11 @@ const DrumpadController = () => {
 
       const source = context.createBufferSource();
       source.buffer = sampleBuffer;
+      const playbackRate = Math.pow(
+        2,
+        getNormalizedStepOctaveSemitoneOffset(transposeSemitoneOffset) / OCTAVE_TRANSPOSE_SEMITONES
+      );
+      source.playbackRate.value = playbackRate;
 
       const gainNode = createVoiceGainNode(context, sampleSettings);
       const scheduledStartTime = startTime ?? context.currentTime;
@@ -815,7 +896,7 @@ const DrumpadController = () => {
       const sustainGain = outputGain * sustainLevel;
       const attackEndTime = scheduledStartTime + attackSeconds;
       const decayEndTime = attackEndTime + decaySeconds;
-      const naturalEndTime = scheduledStartTime + sampleBuffer.duration;
+      const naturalEndTime = scheduledStartTime + sampleBuffer.duration / playbackRate;
 
       gainNode.gain.cancelScheduledValues(scheduledStartTime);
       if (attackSeconds > 0) {
@@ -953,13 +1034,18 @@ const DrumpadController = () => {
       padId: number,
       sampleSettings: PadSampleSettings,
       outputGain: number,
-      startTime?: number
+      startTime?: number,
+      transposeSemitoneOffset = 0
     ) => {
       stopLoopBufferSourceForPad(padId);
 
       const source = context.createBufferSource();
       source.buffer = sampleBuffer;
       source.loop = true;
+      source.playbackRate.value = Math.pow(
+        2,
+        getNormalizedStepOctaveSemitoneOffset(transposeSemitoneOffset) / OCTAVE_TRANSPOSE_SEMITONES
+      );
 
       const gainNode = createVoiceGainNode(context, sampleSettings);
       const scheduledStartTime = startTime ?? context.currentTime;
@@ -1004,7 +1090,7 @@ const DrumpadController = () => {
   );
 
   const playAssignedSample = useCallback(
-    (padId: number, scheduledTime?: number) => {
+    (padId: number, scheduledTime?: number, transposeSemitoneOffset = 0) => {
       const assignedSample = padAssignedSamples[padId];
       if (!assignedSample) {
         stopLoopBufferSourceForPad(padId);
@@ -1030,7 +1116,8 @@ const DrumpadController = () => {
             padId,
             sampleSettings,
             outputGain,
-            scheduledTime
+            scheduledTime,
+            transposeSemitoneOffset
           );
           return;
         }
@@ -1066,7 +1153,8 @@ const DrumpadController = () => {
               padId,
               activeSampleSettings,
               outputGain,
-              scheduledTime
+              scheduledTime,
+              transposeSemitoneOffset
             );
           })
           .catch(() => {
@@ -1088,7 +1176,8 @@ const DrumpadController = () => {
           maxVoices,
           sampleSettings,
           outputGain,
-          scheduledTime
+          scheduledTime,
+          transposeSemitoneOffset
         );
         return;
       }
@@ -1229,9 +1318,9 @@ const DrumpadController = () => {
   }, []);
 
   const handlePadPress = useCallback(
-    (padId: number) => {
+    (padId: number, transposeSemitoneOffset = 0) => {
       flashPadVisual(padId);
-      playAssignedSample(padId);
+      playAssignedSample(padId, undefined, transposeSemitoneOffset);
     },
     [flashPadVisual, playAssignedSample]
   );
@@ -1262,12 +1351,14 @@ const DrumpadController = () => {
       id: createSavedKitId(),
       name: `Pattern ${sequencerPatterns.length + 1}`,
       padStepSequence: createInitialPadStepSequence(DRUM_PADS, STEPS_IN_SEQUENCE),
+      padStepOctaves: createInitialPadStepOctaves(DRUM_PADS, STEPS_IN_SEQUENCE),
       padStepLength: createInitialPadStepLength(DRUM_PADS, DEFAULT_ROW_STEP_LENGTH),
     };
 
     setSequencerPatterns((previous) => [...previous, nextPattern]);
     setActivePatternId(nextPattern.id);
     setPadStepSequence(clonePadStepSequence(nextPattern.padStepSequence));
+    setPadStepOctaves(clonePadStepOctaves(nextPattern.padStepOctaves));
     setPadStepLength(clonePadStepLength(nextPattern.padStepLength));
     currentTickRef.current = 0;
     setCurrentStep(0);
@@ -1280,6 +1371,7 @@ const DrumpadController = () => {
         id: createSavedKitId(),
         name: "Pattern",
         padStepSequence: clonePadStepSequence(padStepSequence),
+        padStepOctaves: clonePadStepOctaves(padStepOctaves),
         padStepLength: clonePadStepLength(padStepLength),
       } satisfies SequencerPattern);
     const nextPattern: SequencerPattern = {
@@ -1289,16 +1381,18 @@ const DrumpadController = () => {
         sequencerPatterns.map((pattern) => pattern.name)
       ),
       padStepSequence: clonePadStepSequence(sourcePattern.padStepSequence),
+      padStepOctaves: clonePadStepOctaves(sourcePattern.padStepOctaves),
       padStepLength: clonePadStepLength(sourcePattern.padStepLength),
     };
 
     setSequencerPatterns((previous) => [...previous, nextPattern]);
     setActivePatternId(nextPattern.id);
     setPadStepSequence(clonePadStepSequence(nextPattern.padStepSequence));
+    setPadStepOctaves(clonePadStepOctaves(nextPattern.padStepOctaves));
     setPadStepLength(clonePadStepLength(nextPattern.padStepLength));
     currentTickRef.current = 0;
     setCurrentStep(0);
-  }, [activePatternId, padStepLength, padStepSequence, sequencerPatterns]);
+  }, [activePatternId, padStepLength, padStepOctaves, padStepSequence, sequencerPatterns]);
 
   const handleDeleteSequencerPattern = useCallback(() => {
     if (sequencerPatterns.length <= 1) {
@@ -1325,6 +1419,7 @@ const DrumpadController = () => {
     setSequencerPatterns(nextPatterns);
     setActivePatternId(nextActivePattern.id);
     setPadStepSequence(clonePadStepSequence(nextActivePattern.padStepSequence));
+    setPadStepOctaves(clonePadStepOctaves(nextActivePattern.padStepOctaves));
     setPadStepLength(clonePadStepLength(nextActivePattern.padStepLength));
     currentTickRef.current = 0;
     setCurrentStep(0);
@@ -1339,6 +1434,7 @@ const DrumpadController = () => {
 
       setActivePatternId(selectedPattern.id);
       setPadStepSequence(clonePadStepSequence(selectedPattern.padStepSequence));
+      setPadStepOctaves(clonePadStepOctaves(selectedPattern.padStepOctaves));
       setPadStepLength(clonePadStepLength(selectedPattern.padStepLength));
       currentTickRef.current = 0;
       setCurrentStep(0);
@@ -1361,10 +1457,30 @@ const DrumpadController = () => {
         [padId]: nextSteps,
       };
     });
+    {
+      setPadStepOctaves((previous) => {
+        const previousStepOctaves = previous[padId] ?? EMPTY_STEP_OCTAVE_SEQUENCE;
+        if (previousStepOctaves[stepIndex] === 0) {
+          return previous;
+        }
+
+        const nextStepOctaves = [...previousStepOctaves];
+        nextStepOctaves[stepIndex] = 0;
+        return {
+          ...previous,
+          [padId]: nextStepOctaves,
+        };
+      });
+    }
   }, []);
 
   const handleSequencerStepSet = useCallback(
-    (padId: number, stepIndex: number, isEnabled: boolean) => {
+    (
+      padId: number,
+      stepIndex: number,
+      isEnabled: boolean,
+      transposeSemitoneOffset?: number
+    ) => {
       if (stepIndex < 0 || stepIndex >= STEPS_IN_SEQUENCE) {
         return;
       }
@@ -1383,6 +1499,28 @@ const DrumpadController = () => {
           [padId]: nextSteps,
         };
       });
+      const hasExplicitTranspose = typeof transposeSemitoneOffset === "number";
+      const normalizedTransposeSemitoneOffset = hasExplicitTranspose
+        ? getNormalizedStepOctaveSemitoneOffset(transposeSemitoneOffset)
+        : 0;
+      const previousSteps = padStepSequenceRef.current[padId] ?? createEmptyStepSequence(STEPS_IN_SEQUENCE);
+      const wasEnabled = Boolean(previousSteps[stepIndex]);
+      if (!isEnabled || hasExplicitTranspose || !wasEnabled) {
+        setPadStepOctaves((previous) => {
+          const previousStepOctaves = previous[padId] ?? EMPTY_STEP_OCTAVE_SEQUENCE;
+          const nextStepOctave = isEnabled ? normalizedTransposeSemitoneOffset : 0;
+          if (previousStepOctaves[stepIndex] === nextStepOctave) {
+            return previous;
+          }
+
+          const nextStepOctaves = [...previousStepOctaves];
+          nextStepOctaves[stepIndex] = nextStepOctave;
+          return {
+            ...previous,
+            [padId]: nextStepOctaves,
+          };
+        });
+      }
     },
     []
   );
@@ -1427,7 +1565,7 @@ const DrumpadController = () => {
   }, []);
 
   const recordPadStepAtQuantizedTick = useCallback(
-    (padId: number) => {
+    (padId: number, transposeSemitoneOffset = 0) => {
       const assignedSampleId = padSampleIdsRef.current[padId] ?? "";
       if (!assignedSampleId) {
         return;
@@ -1442,19 +1580,31 @@ const DrumpadController = () => {
         Math.round(currentTickRef.current / rowStepTickMultiplier) * rowStepTickMultiplier;
       const stepIndex =
         Math.floor(quantizedTick / rowStepTickMultiplier) % STEPS_IN_SEQUENCE;
+      const normalizedTransposeSemitoneOffset = getNormalizedStepOctaveSemitoneOffset(
+        transposeSemitoneOffset
+      );
 
       setPadStepSequence((previous) => {
         const previousSteps = previous[padId] ?? createEmptyStepSequence(STEPS_IN_SEQUENCE);
-        if (previousSteps[stepIndex]) {
+        const nextSteps = [...previousSteps];
+        nextSteps[stepIndex] = true;
+        if (previousSteps[stepIndex] === nextSteps[stepIndex]) {
           return previous;
         }
 
-        const nextSteps = [...previousSteps];
-        nextSteps[stepIndex] = true;
+        return { ...previous, [padId]: nextSteps };
+      });
+      setPadStepOctaves((previous) => {
+        const previousStepOctaves = previous[padId] ?? EMPTY_STEP_OCTAVE_SEQUENCE;
+        if (previousStepOctaves[stepIndex] === normalizedTransposeSemitoneOffset) {
+          return previous;
+        }
 
+        const nextStepOctaves = [...previousStepOctaves];
+        nextStepOctaves[stepIndex] = normalizedTransposeSemitoneOffset;
         return {
           ...previous,
-          [padId]: nextSteps,
+          [padId]: nextStepOctaves,
         };
       });
     },
@@ -1504,13 +1654,17 @@ const DrumpadController = () => {
         if (!steps[rowStepIndex]) {
           return;
         }
+        const rowStepOctaves = padStepOctavesRef.current[padId] ?? EMPTY_STEP_OCTAVE_SEQUENCE;
+        const transposeSemitoneOffset = getNormalizedStepOctaveSemitoneOffset(
+          rowStepOctaves[rowStepIndex]
+        );
 
         const assignedSampleId = padSampleIdsRef.current[padId] ?? "";
         if (!assignedSampleId) {
           return;
         }
 
-        playAssignedSampleRef.current(padId, tickTimeSeconds);
+        playAssignedSampleRef.current(padId, tickTimeSeconds, transposeSemitoneOffset);
         triggeredPadIds.push(padId);
       });
 
@@ -1607,16 +1761,25 @@ const DrumpadController = () => {
       const key = event.key.toUpperCase();
       const padId = keyboardPadMap.get(key);
       if (padId) {
-        handlePadPress(padId);
+        const transposeSemitoneOffset = getCurrentTransposeSemitoneOffset(event.shiftKey);
+        handlePadPress(padId, transposeSemitoneOffset);
         if (isRecording) {
-          recordPadStepAtQuantizedTick(padId);
+          recordPadStepAtQuantizedTick(padId, transposeSemitoneOffset);
         }
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handlePadPress, isRecording, keyboardPadMap, recordPadStepAtQuantizedTick]);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [
+    getCurrentTransposeSemitoneOffset,
+    handlePadPress,
+    isRecording,
+    keyboardPadMap,
+    recordPadStepAtQuantizedTick,
+  ]);
 
   const handleClearSequence = () => {
     const defaultPattern = createDefaultSequencerPattern();
@@ -1627,6 +1790,7 @@ const DrumpadController = () => {
     const defaultPadRowMuted = createInitialPadRowMuted(DRUM_PADS);
     const defaultPadSampleSettings = createInitialPadSampleSettings(DRUM_PADS);
     const defaultPadStepSequence = clonePadStepSequence(defaultPattern.padStepSequence);
+    const defaultPadStepOctaves = clonePadStepOctaves(defaultPattern.padStepOctaves);
     const defaultPadStepLength = clonePadStepLength(defaultPattern.padStepLength);
 
     stopAllLoopBufferSources();
@@ -1648,6 +1812,7 @@ const DrumpadController = () => {
     setSequencerPatterns([defaultPattern]);
     setActivePatternId(defaultPattern.id);
     setPadStepSequence(defaultPadStepSequence);
+    setPadStepOctaves(defaultPadStepOctaves);
     setPadStepLength(defaultPadStepLength);
     setSequencerBpm(DEFAULT_SEQUENCER_BPM);
     setSequencerClockStepLength(BASE_SEQUENCER_STEP_LENGTH);
@@ -1985,6 +2150,7 @@ const DrumpadController = () => {
       const defaultsPadRowMuted = createInitialPadRowMuted(DRUM_PADS);
       const defaultsPadSampleSettings = createInitialPadSampleSettings(DRUM_PADS);
       const defaultsPadStepSequence = createInitialPadStepSequence(DRUM_PADS, STEPS_IN_SEQUENCE);
+      const defaultsPadStepOctaves = createInitialPadStepOctaves(DRUM_PADS, STEPS_IN_SEQUENCE);
       const defaultsPadStepLength = createInitialPadStepLength(
         DRUM_PADS,
         DEFAULT_ROW_STEP_LENGTH
@@ -2001,6 +2167,10 @@ const DrumpadController = () => {
         padStepSequence: normalizePadStepSequence({
           ...defaultsPadStepSequence,
           ...(candidateProjectState.padStepSequence ?? {}),
+        }),
+        padStepOctaves: normalizePadStepOctaves({
+          ...defaultsPadStepOctaves,
+          ...(candidateProjectState.padStepOctaves ?? {}),
         }),
         padStepLength: normalizePadStepLength({
           ...defaultsPadStepLength,
@@ -2056,6 +2226,7 @@ const DrumpadController = () => {
       setSequencerPatterns(nextPatterns);
       setActivePatternId(nextActivePattern.id);
       setPadStepSequence(clonePadStepSequence(nextActivePattern.padStepSequence));
+      setPadStepOctaves(clonePadStepOctaves(nextActivePattern.padStepOctaves));
       setPadStepLength(clonePadStepLength(nextActivePattern.padStepLength));
       setSequencerBpm(
         clampSequencerBpm(Number(candidateProjectState.sequencerBpm ?? DEFAULT_SEQUENCER_BPM))
@@ -2068,6 +2239,7 @@ const DrumpadController = () => {
     },
     [
       normalizePadStepLength,
+      normalizePadStepOctaves,
       normalizePadSampleSettingsMap,
       normalizePadStepSequence,
       normalizeSequencerPatterns,
@@ -2486,6 +2658,14 @@ const DrumpadController = () => {
           if (!rowSteps[rowStepIndex]) {
             continue;
           }
+          const rowStepOctaves = padStepOctaves[padId] ?? EMPTY_STEP_OCTAVE_SEQUENCE;
+          const transposeSemitoneOffset = getNormalizedStepOctaveSemitoneOffset(
+            rowStepOctaves[rowStepIndex]
+          );
+          const playbackRate = Math.pow(
+            2,
+            transposeSemitoneOffset / OCTAVE_TRANSPOSE_SEMITONES
+          );
 
           const eventTimeSeconds = tick * secondsPerTick;
           const padVolume = padVolumes[padId] ?? DEFAULT_PAD_VOLUME;
@@ -2506,6 +2686,7 @@ const DrumpadController = () => {
             const source = offlineContext.createBufferSource();
             source.buffer = sampleBuffer;
             source.loop = true;
+            source.playbackRate.value = playbackRate;
 
             const gainNode = createRenderVoiceGainNode(sampleSettings);
             const attackSeconds = Math.max(0, sampleSettings.attackMs / 1000);
@@ -2544,6 +2725,7 @@ const DrumpadController = () => {
 
           const source = offlineContext.createBufferSource();
           source.buffer = sampleBuffer;
+          source.playbackRate.value = playbackRate;
 
           const gainNode = createRenderVoiceGainNode(sampleSettings);
           const attackSeconds = Math.max(0, sampleSettings.attackMs / 1000);
@@ -2553,7 +2735,7 @@ const DrumpadController = () => {
           const sustainGain = outputGain * sustainLevel;
           const attackEndTime = eventTimeSeconds + attackSeconds;
           const decayEndTime = attackEndTime + decaySeconds;
-          const naturalEndTime = eventTimeSeconds + sampleBuffer.duration;
+          const naturalEndTime = eventTimeSeconds + sampleBuffer.duration / playbackRate;
 
           gainNode.gain.cancelScheduledValues(eventTimeSeconds);
           if (attackSeconds > 0) {
@@ -2595,6 +2777,7 @@ const DrumpadController = () => {
       padSampleIds,
       padSampleSettings,
       padStepLength,
+      padStepOctaves,
       padStepSequence,
       padVolumes,
       sampleAssetsById,
@@ -3311,6 +3494,7 @@ const DrumpadController = () => {
               currentTick={currentStep}
               isPlaying={isPlaying}
               isRecording={isRecording}
+              getCurrentTransposeSemitoneOffset={getCurrentTransposeSemitoneOffset}
               bpm={sequencerBpm}
               clockStepLength={sequencerClockStepLength}
               engineStepLength={sequencerEngineStepLength}
@@ -3336,6 +3520,26 @@ const DrumpadController = () => {
                 onExportKit={handleExportKit}
                 onImportKit={handleImportKit}
               />
+              <div className="rounded-xl border border-[#a8aba5] bg-[#efeee8]/90 px-3 py-3 text-center">
+                <div className="mt-1 text-[#5c6270] text-xs font-medium">{KEYBOARD_HINT_TEXT}</div>
+                <div className="text-[#5c6270] text-[11px] font-medium mt-2">
+                  Hold `1-9` + pad key for +0.25..+2.25 octaves, hold `Shift` + `1-9` + pad key
+                  for -0.25..-2.25 octaves.
+                </div>
+                <div className="text-[#5c6270] text-[11px] font-medium mb-2">
+                  Click toggles steps. Hold `1-9` and click a step to set transpose. Hold `Shift`
+                  + `1-9` and click for negative transpose.
+                </div>
+                <div
+                  className={`inline-flex items-center rounded-full border px-2 py-0.5 mt-2 text-[11px] font-semibold ${
+                    heldTransposeSemitoneOffset === 0
+                      ? "border-[#a8aba5] bg-[#d7d9d3] text-[#515a6a]"
+                      : "border-[#cc6e20] bg-[#ff8c2b] text-[#ffffff]"
+                  }`}
+                >
+                  Held Transpose: {heldTransposeOctaveOffsetLabel}
+                </div>
+              </div>
               <DrumpadGrid
                 pads={DRUM_PADS}
                 padVolumes={padVolumes}

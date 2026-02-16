@@ -27,11 +27,13 @@ export interface PadSampleSettings {
 }
 export type PadSampleSettingsMap = Record<number, PadSampleSettings>;
 export type PadStepSequence = Record<number, boolean[]>;
+export type PadStepOctaves = Record<number, number[]>;
 export type PadStepLength = Record<number, "1/32" | "1/16" | "1/8" | "1/4">;
 
 export interface SequencerPattern {
   id: string;
   name: string;
   padStepSequence: PadStepSequence;
+  padStepOctaves: PadStepOctaves;
   padStepLength: PadStepLength;
 }

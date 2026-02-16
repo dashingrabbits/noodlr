@@ -8,6 +8,7 @@ export interface StepSequencerRow {
   isMuted: boolean;
   stepLength: SequencerStepLength;
   steps: boolean[];
+  stepOctaves: number[];
 }
 
 export interface StepSequencerPatternOption {
@@ -22,6 +23,7 @@ export interface StepSequencerProps {
   currentTick: number;
   isPlaying: boolean;
   isRecording: boolean;
+  getCurrentTransposeSemitoneOffset: (eventShiftPressed?: boolean) => number;
   bpm: number;
   clockStepLength: SequencerStepLength;
   engineStepLength: SequencerStepLength;
@@ -35,7 +37,12 @@ export interface StepSequencerProps {
   onExportRow: (padId: number) => Promise<void> | void;
   onToggleRowMute: (padId: number) => void;
   onStepToggle: (padId: number, stepIndex: number) => void;
-  onStepSet: (padId: number, stepIndex: number, isEnabled: boolean) => void;
+  onStepSet: (
+    padId: number,
+    stepIndex: number,
+    isEnabled: boolean,
+    transposeSemitoneOffset?: number
+  ) => void;
   onRowStepLengthChange: (padId: number, stepLength: SequencerStepLength) => void;
   onBpmChange: (bpm: number) => void;
   onClockStepLengthChange: (stepLength: SequencerStepLength) => void;

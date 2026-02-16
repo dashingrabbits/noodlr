@@ -5,6 +5,7 @@ import type {
   PadRowMuted,
   PadSampleSettingsMap,
   PadStepLength,
+  PadStepOctaves,
   PadStepSequence,
   PadSampleIds,
   PadVolumes,
@@ -23,6 +24,7 @@ export interface ProjectState {
   padSampleIds: PadSampleIds;
   padSampleSettings: PadSampleSettingsMap;
   padStepSequence: PadStepSequence;
+  padStepOctaves: PadStepOctaves;
   padStepLength: PadStepLength;
   sequencerPatterns: SequencerPattern[];
   activePatternId: string;

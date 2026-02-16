@@ -6,7 +6,7 @@ export const rowContainerClassName = "rounded-lg border border-[#b8b5aa] bg-[#f7
 export const rowStepsScrollerClassName = "w-full";
 export const rowGridClassName = "grid w-full gap-1";
 export const stepCellClassName =
-  "w-full aspect-square rounded-full sm:rounded-sm border transition-colors duration-100 cursor-pointer";
+  "relative w-full aspect-square rounded-full sm:rounded-sm border transition-colors duration-100 cursor-pointer";
 
 export const getTransportButtonClassName = (isPlaying: boolean): string => {
   if (isPlaying) {

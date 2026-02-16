@@ -7,6 +7,7 @@ import type {
   PadRowMuted,
   PadSampleSettings,
   PadSampleSettingsMap,
+  PadStepOctaves,
   PadStepLength,
   PadStepSequence,
   PadVolumes,
@@ -104,6 +105,16 @@ export const createInitialPadStepSequence = (
   return pads.reduce<PadStepSequence>((stepSequenceMap, pad) => {
     stepSequenceMap[pad.id] = Array.from({ length: stepsPerPad }, () => false);
     return stepSequenceMap;
+  }, {});
+};
+
+export const createInitialPadStepOctaves = (
+  pads: DrumPadConfig[],
+  stepsPerPad: number
+): PadStepOctaves => {
+  return pads.reduce<PadStepOctaves>((stepOctaveMap, pad) => {
+    stepOctaveMap[pad.id] = Array.from({ length: stepsPerPad }, () => 0);
+    return stepOctaveMap;
   }, {});
 };
 
