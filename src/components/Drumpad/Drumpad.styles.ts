@@ -11,6 +11,10 @@ export const emptyPadIndicatorClassName =
   "absolute inset-0 flex flex-col items-center justify-center gap-1 text-[#515a6a]";
 export const emptyPadPlusBadgeClassName =
   "inline-flex h-9 w-9 sm:h-11 sm:w-11 items-center justify-center rounded-full border border-[#8e928f] bg-[#f6f5ef]/90 shadow-sm cursor-pointer";
+export const padKeycapClassName =
+  "peer absolute left-2 bottom-2 sm:left-3 sm:bottom-3 inline-flex min-w-6 sm:min-w-7 items-center justify-center rounded-[6px] border border-[#8e928f] bg-[#e3e3dc] px-1.5 py-[8px] text-[10px] sm:text-xs font-bold leading-none text-[#515a6a] shadow-[0_1px_0_rgba(255,255,255,0.7)_inset,0_1px_2px_rgba(0,0,0,0.12)]";
+export const padKeycapTooltipClassName =
+  "pointer-events-none absolute left-2 bottom-11 sm:left-3 sm:bottom-12 z-20 w-44 rounded-md border border-[#b8b5aa] bg-[#f6f5ef] px-2 py-1 text-[10px] font-semibold text-[#515a6a] shadow-md opacity-0 invisible transition-opacity duration-150 peer-hover:opacity-100 peer-hover:visible peer-focus-visible:opacity-100 peer-focus-visible:visible";
 
 export const getPadButtonClassName = (color: string): string => {
   return `relative w-full aspect-square rounded-lg sm:rounded-xl touch-none select-none ${color} hover:brightness-105 transition-all transform hover:scale-[1.02] active:scale-95 flex flex-col items-center justify-center text-[#515a6a] font-bold text-xs sm:text-lg shadow-md border border-[#9fa39c]`;

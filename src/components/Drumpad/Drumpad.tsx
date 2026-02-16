@@ -10,6 +10,8 @@ import {
   emptyPadPlusBadgeClassName,
   getPadButtonClassName,
   editSampleButtonClassName,
+  padKeycapClassName,
+  padKeycapTooltipClassName,
   padSummaryClassName,
 } from "./Drumpad.styles";
 
@@ -75,9 +77,16 @@ const Drumpad = memo(({
           <div className="absolute left-2 top-2 sm:left-3 sm:top-3 text-[10px] sm:text-xs tracking-[0.08em]">
             {displayPadName}
           </div>
-          <div className="absolute right-2 top-2 sm:right-3 sm:top-3 text-[10px] sm:text-xs opacity-80">
-            {pad.key}
-          </div>
+          <span
+            className={padKeycapClassName}
+            aria-label={`Keyboard key ${pad.key}`}
+            title={`Press ${pad.key.toUpperCase()} on your keyboard to trigger this pad`}
+          >
+            {pad.key.toUpperCase()}
+          </span>
+          <span className={padKeycapTooltipClassName} role="tooltip">
+            Press {pad.key.toUpperCase()} on your keyboard to trigger this pad
+          </span>
           {hasAssignedSample ? (
             <div className="max-w-[85%] text-xs sm:text-base text-center px-2 truncate">
               {assignedSampleName}
@@ -90,7 +99,7 @@ const Drumpad = memo(({
               <span className="text-[10px] sm:text-xs font-bold tracking-[0.08em]">ADD SAMPLE</span>
             </div>
           )}
-          <div className="absolute inset-x-1 bottom-1 flex items-center justify-between gap-1 sm:hidden text-[8px] font-semibold">
+          <div className="absolute inset-x-1 bottom-1 pl-8 flex items-center justify-between gap-1 sm:hidden text-[8px] font-semibold">
             <span className="truncate text-[#515a6a]/90">{assignedSampleName || "Tap + to assign"}</span>
             <span className="shrink-0 text-[#515a6a]/90">P{polyphony}</span>
           </div>
