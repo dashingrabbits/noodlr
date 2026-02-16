@@ -130,6 +130,9 @@ const IMPORTED_SAMPLE_ID_PREFIX = "imported";
 const IMPORTED_PROJECT_SAMPLE_ID_PREFIX = "imported-project";
 const PROJECT_ARCHIVE_ACCEPT = ".zip,.noodlr-project.zip,application/zip";
 const KIT_ARCHIVE_ACCEPT = ".zip,.noodlr-kit.zip,application/zip";
+const DEMO_KIT_ARCHIVE_URL = "/demo/Kit-2026-02-15T23-21-50.noodlr-kit.zip";
+const DEMO_KIT_ARCHIVE_FILE_NAME = "Kit-2026-02-15T23-21-50.noodlr-kit.zip";
+const DEMO_KIT_AUTOLOAD_STORAGE_KEY = "noodlr.demoKitAutoLoaded.v1";
 const EMPTY_STEP_OCTAVE_SEQUENCE = Array.from({ length: STEPS_IN_SEQUENCE }, () => 0);
 const RECORD_COUNT_IN_BEATS = 4;
 
@@ -215,6 +218,30 @@ const isEditableEventTarget = (target: EventTarget | null): boolean => {
   );
 };
 
+const hasDemoKitAutoLoaded = (): boolean => {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  try {
+    return window.localStorage.getItem(DEMO_KIT_AUTOLOAD_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+};
+
+const markDemoKitAutoLoaded = () => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(DEMO_KIT_AUTOLOAD_STORAGE_KEY, "1");
+  } catch {
+    // Ignore localStorage errors; demo kit still imports.
+  }
+};
+
 const DrumpadController = () => {
   const getInitialSampleRootDir = () => readPersistedSampleSoundsDir();
   const initialPattern = useMemo(() => createDefaultSequencerPattern(), []);
@@ -267,6 +294,7 @@ const DrumpadController = () => {
   const [isSampleRootDirPromptOpen, setIsSampleRootDirPromptOpen] = useState(
     () => !Boolean(getInitialSampleRootDir().trim())
   );
+  const [isImportingDemoKit, setIsImportingDemoKit] = useState(false);
   const [sampleSearch, setSampleSearch] = useState("");
   const [sampleAssets, setSampleAssets] = useState<SampleAsset[]>([]);
   const [importedSampleAssets, setImportedSampleAssets] = useState<SampleAsset[]>([]);
@@ -2305,6 +2333,32 @@ const DrumpadController = () => {
     [applyDrumKitState]
   );
 
+  const importDemoKitArchive = useCallback(async (): Promise<boolean> => {
+    setSampleError(null);
+    setIsImportingDemoKit(true);
+
+    try {
+      const response = await fetch(DEMO_KIT_ARCHIVE_URL);
+      if (!response.ok) {
+        throw new Error("Demo kit is unavailable.");
+      }
+
+      const archiveBlob = await response.blob();
+      const archiveFile = new File([archiveBlob], DEMO_KIT_ARCHIVE_FILE_NAME, {
+        type: archiveBlob.type || "application/zip",
+      });
+
+      await handleImportKit(archiveFile);
+      markDemoKitAutoLoaded();
+      return true;
+    } catch (error) {
+      setSampleError(error instanceof Error ? error.message : "Unable to load demo kit.");
+      return false;
+    } finally {
+      setIsImportingDemoKit(false);
+    }
+  }, [handleImportKit]);
+
   const handleSaveProjectAsNew = useCallback(
     (projectName: string) => {
       const normalizedProjectName = sanitizeProjectName(projectName);
@@ -3594,10 +3648,37 @@ const DrumpadController = () => {
     sampleRootPromptKitInputRef.current?.click();
   }, []);
 
+  const handleUseDemoKit = useCallback(() => {
+    void (async () => {
+      const didImport = await importDemoKitArchive();
+      if (didImport) {
+        setIsSampleRootDirPromptOpen(false);
+      }
+    })();
+  }, [importDemoKitArchive]);
+
   useEffect(() => {
     let cancelled = false;
 
     const bootstrapSampleSource = async () => {
+      const tryAutoLoadDemoKit = async (): Promise<boolean> => {
+        if (hasDemoKitAutoLoaded()) {
+          return false;
+        }
+
+        const didImportDemoKit = await importDemoKitArchive();
+        if (cancelled) {
+          return true;
+        }
+
+        if (didImportDemoKit) {
+          setIsSampleRootDirPromptOpen(false);
+          return true;
+        }
+
+        return false;
+      };
+
       if (supportsDirectoryPicker) {
         const persistedDirectoryHandle = await readPersistedDirectoryHandle();
         if (cancelled) {
@@ -3629,18 +3710,33 @@ const DrumpadController = () => {
           });
         }
 
+        const didAutoLoadDemoKit = await tryAutoLoadDemoKit();
+        if (cancelled || didAutoLoadDemoKit) {
+          return;
+        }
+
         setIsSampleRootDirPromptOpen(true);
         return;
       }
 
       const normalizedRootDir = sampleRootDir.trim();
       if (!normalizedRootDir) {
+        const didAutoLoadDemoKit = await tryAutoLoadDemoKit();
+        if (cancelled || didAutoLoadDemoKit) {
+          return;
+        }
+
         setIsSampleRootDirPromptOpen(true);
         return;
       }
 
       const didLoad = await handleLoadSampleAssets(normalizedRootDir, null);
       if (!didLoad) {
+        const didAutoLoadDemoKit = await tryAutoLoadDemoKit();
+        if (cancelled || didAutoLoadDemoKit) {
+          return;
+        }
+
         setIsSampleRootDirPromptOpen(true);
       }
     };
@@ -4014,7 +4110,7 @@ const DrumpadController = () => {
               </>
             )}
             {sampleError ? <p className="mt-2 text-xs text-[#a6382f]">{sampleError}</p> : null}
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-4 gap-2">
               <button
                 type="button"
                 className="px-4 py-2 rounded-md text-xs font-bold bg-[#d4d4ce] hover:bg-[#c4c6bf] text-[#515a6a] border border-[#a8aba5] transition-colors"
@@ -4031,9 +4127,17 @@ const DrumpadController = () => {
               </button>
               <button
                 type="button"
-                className="px-4 py-2 rounded-md text-xs font-bold bg-[#ff8c2b] hover:bg-[#ed7d1f] text-[#515a6a] border border-[#d66d14] transition-colors"
+                className="px-4 py-2 rounded-md text-xs font-bold bg-[#ff8c2b] hover:bg-[#ed7d1f] text-[#515a6a] border border-[#d66d14] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                onClick={handleUseDemoKit}
+                disabled={isImportingDemoKit || isSelectingSampleDirectory}
+              >
+                {isImportingDemoKit ? "Loading Demo..." : "Use Demo Kit"}
+              </button>
+              <button
+                type="button"
+                className="px-4 py-2 rounded-md text-xs font-bold bg-[#d4d4ce] hover:bg-[#c4c6bf] text-[#515a6a] border border-[#a8aba5] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                 onClick={handleSubmitSampleRootDirPrompt}
-                disabled={isSelectingSampleDirectory}
+                disabled={isSelectingSampleDirectory || isImportingDemoKit}
               >
                 {supportsDirectoryPicker
                   ? isSelectingSampleDirectory
