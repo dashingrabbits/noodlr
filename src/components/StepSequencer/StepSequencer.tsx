@@ -297,9 +297,14 @@ const StepSequencer = ({
               className={`${rowContainerClassName} ${row.isMuted ? "opacity-80" : ""}`}
             >
               <div className="mb-1 flex items-center justify-between gap-3">
-                <div className="truncate">
-                  <span className="text-[11px] font-bold text-[#515a6a]">{row.padLabel}</span>
-                  <span className="ml-2 text-[10px] text-[#666]">{row.padKey}</span>
+                <div className="min-w-0 flex-1 max-w-[130px] grid grid-cols-3">
+                  <span className="justify-self-start inline-flex min-w-5 items-center justify-center rounded-sm border border-[#b0b4ad] bg-[#d7d9d3] px-1 py-[1px] text-[10px] font-bold text-[#515a6a]">
+                    {row.padKey}
+                  </span>
+                  <span className="truncate text-left text-[11px] font-bold text-[#515a6a] pr-2">
+                    {row.padLabel}
+                  </span>
+                  <span className="text-left text-[10px] text-[#666]">{row.sampleName}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -342,7 +347,6 @@ const StepSequencer = ({
                       ))}
                     </select>
                   </label>
-                  <div className="text-[10px] text-[#666] truncate max-w-[160px]">{row.sampleName}</div>
                 </div>
               </div>
               <div className={rowStepsScrollerClassName}>
