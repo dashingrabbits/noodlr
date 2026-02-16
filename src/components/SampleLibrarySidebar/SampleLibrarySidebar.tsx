@@ -17,6 +17,7 @@ import {
   sampleRowActiveClassName,
   sampleRowBaseClassName,
   sidebarClassName,
+  tagBadgeClassName,
 } from "./SampleLibrarySidebar.styles";
 
 const SAMPLES_PAGE_SIZE = 100;
@@ -214,7 +215,7 @@ const SampleLibrarySidebar = ({
               <div className="mt-1 flex gap-1 flex-wrap">
                 <span className={badgeClassName}>{sample.category}</span>
                 {sample.tags.map((tag) => (
-                  <span key={`${sample.id}-${tag}`} className={badgeClassName}>
+                  <span key={`${sample.id}-${tag}`} className={tagBadgeClassName}>
                     {tag}
                   </span>
                 ))}

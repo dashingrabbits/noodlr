@@ -11,5 +11,7 @@ export const sampleRowBaseClassName =
   "w-full text-left rounded-md border border-[#b7bab3] bg-[#fbfaf6] px-2 py-2 cursor-grab active:cursor-grabbing hover:border-[#7f8899]";
 export const sampleRowActiveClassName = "ring-1 ring-[#ff8c2b] border-[#ff8c2b]";
 export const badgeClassName =
-  "inline-block rounded-full bg-[#d4d4ce] text-[#1a1a1a] text-[10px] px-2 py-[2px]";
+  "inline-block rounded-full bg-[#ff8c2b] text-white text-[10px] px-2 py-[2px]";
+export const tagBadgeClassName =
+  "inline-block rounded-full bg-[#ff8c2b] text-white text-[10px] px-2 py-[2px]";
 export const metaTextClassName = "text-[10px] text-[#555]";

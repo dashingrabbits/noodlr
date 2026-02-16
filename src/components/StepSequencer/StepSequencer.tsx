@@ -1,5 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, Circle, Copy, Download, Play, Plus, Square, Trash2, Volume2, VolumeX } from "lucide-react";
+import {
+  Bell,
+  BellOff,
+  ChevronDown,
+  Circle,
+  Copy,
+  Download,
+  Play,
+  Plus,
+  Square,
+  Trash2,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 import type { StepSequencerProps } from "./StepSequencer.types";
 import {
   createStepIndexArray,
@@ -17,6 +30,7 @@ import {
   duplicatePatternButtonClassName,
   exportButtonClassName,
   getStepCellClassName,
+  getMetronomeButtonClassName,
   getTransportButtonClassName,
   getRecordButtonClassName,
   patternSelectClassName,
@@ -39,12 +53,14 @@ const StepSequencer = ({
   currentTick,
   isPlaying,
   isRecording,
+  isMetronomeEnabled,
   getCurrentTransposeSemitoneOffset,
   bpm,
   clockStepLength,
   engineStepLength,
   onTogglePlayback,
   onToggleRecording,
+  onToggleMetronome,
   onAddPattern,
   onDuplicatePattern,
   onDeletePattern,
@@ -148,7 +164,7 @@ const StepSequencer = ({
 
       {isExpanded ? (
         <>
-      <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+      <div className="mb-3 grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
         <div className="flex flex-wrap items-end gap-2">
           <button type="button" onClick={onAddPattern} className={addPatternButtonClassName}>
             <Plus size={14} />
@@ -196,6 +212,9 @@ const StepSequencer = ({
               ))}
             </select>
           </label>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-2 md:justify-end">
           <button type="button" onClick={onTogglePlayback} className={getTransportButtonClassName(isPlaying)}>
             {isPlaying ? <Square size={14} /> : <Play size={14} />}
             <span className="ml-1">{isPlaying ? "Stop" : "Play"}</span>
@@ -204,54 +223,66 @@ const StepSequencer = ({
             <Circle size={12} fill={isRecording ? "currentColor" : "none"} />
             <span className="ml-1">{isRecording ? "Rec On" : "Rec"}</span>
           </button>
-
-          <label className="text-[10px] text-[#575757] uppercase tracking-wide font-bold">
-            BPM
-            <input
-              type="text"
-              inputMode="numeric"
-              min={MIN_SEQUENCER_BPM}
-              max={MAX_SEQUENCER_BPM}
-              value={bpmInputValue}
-              onChange={(event) => {
-                const nextValue = event.target.value;
-                if (/^\d*$/.test(nextValue)) {
-                  setBpmInputValue(nextValue);
-                }
-              }}
-              onBlur={commitBpmInputValue}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  commitBpmInputValue();
-                  (event.currentTarget as HTMLInputElement).blur();
-                }
-
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  setBpmInputValue(String(bpm));
-                  (event.currentTarget as HTMLInputElement).blur();
-                }
-              }}
-              className="ml-2 w-20 rounded-md bg-[#fbfaf6] text-[#515a6a] text-xs px-2 py-1 border border-[#a8aba5] focus:outline-none focus:ring-1 focus:ring-[#ff8c2b]"
-            />
-          </label>
-
-          <label className="text-[10px] text-[#575757] uppercase tracking-wide font-bold">
-            Clock
-            <select
-              value={clockStepLength}
-              onChange={(event) => onClockStepLengthChange(event.target.value as SequencerStepLength)}
-              className={`ml-2 ${patternSelectClassName}`}
-            >
-              {ROW_SEQUENCER_STEP_LENGTH_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <button
+            type="button"
+            onClick={onToggleMetronome}
+            className={getMetronomeButtonClassName(isMetronomeEnabled)}
+            aria-label={isMetronomeEnabled ? "Disable metronome" : "Enable metronome"}
+            title={isMetronomeEnabled ? "Metronome on" : "Metronome off"}
+          >
+            {isMetronomeEnabled ? <Bell size={14} /> : <BellOff size={14} />}
+            <span className="ml-1">Tempo</span>
+          </button>
         </div>
+      </div>
+
+      <div className="mb-3 flex flex-wrap items-end justify-start gap-3">
+        <label className="text-[10px] text-[#575757] uppercase tracking-wide font-bold">
+          BPM
+          <input
+            type="text"
+            inputMode="numeric"
+            min={MIN_SEQUENCER_BPM}
+            max={MAX_SEQUENCER_BPM}
+            value={bpmInputValue}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              if (/^\d*$/.test(nextValue)) {
+                setBpmInputValue(nextValue);
+              }
+            }}
+            onBlur={commitBpmInputValue}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                commitBpmInputValue();
+                (event.currentTarget as HTMLInputElement).blur();
+              }
+
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setBpmInputValue(String(bpm));
+                (event.currentTarget as HTMLInputElement).blur();
+              }
+            }}
+            className="ml-2 w-20 rounded-md bg-[#fbfaf6] text-[#515a6a] text-xs px-2 py-1 border border-[#a8aba5] focus:outline-none focus:ring-1 focus:ring-[#ff8c2b]"
+          />
+        </label>
+
+        <label className="text-[10px] text-[#575757] uppercase tracking-wide font-bold">
+          Clock
+          <select
+            value={clockStepLength}
+            onChange={(event) => onClockStepLengthChange(event.target.value as SequencerStepLength)}
+            className={`ml-2 ${patternSelectClassName}`}
+          >
+            {ROW_SEQUENCER_STEP_LENGTH_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       <div className="space-y-2">

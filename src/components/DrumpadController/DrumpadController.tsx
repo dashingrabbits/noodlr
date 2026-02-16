@@ -131,6 +131,7 @@ const IMPORTED_PROJECT_SAMPLE_ID_PREFIX = "imported-project";
 const PROJECT_ARCHIVE_ACCEPT = ".zip,.noodlr-project.zip,application/zip";
 const KIT_ARCHIVE_ACCEPT = ".zip,.noodlr-kit.zip,application/zip";
 const EMPTY_STEP_OCTAVE_SEQUENCE = Array.from({ length: STEPS_IN_SEQUENCE }, () => 0);
+const RECORD_COUNT_IN_BEATS = 4;
 
 type ActiveOneShotVoice = {
   source: AudioBufferSourceNode;
@@ -241,6 +242,8 @@ const DrumpadController = () => {
   const [padSampleIds, setPadSampleIds] = useState<PadSampleIds>({});
   const [currentStep, setCurrentStep] = useState(0);
   const [isRecording, setIsRecording] = useState(false);
+  const [isMetronomeEnabled, setIsMetronomeEnabled] = useState(false);
+  const [countInBeatsRemaining, setCountInBeatsRemaining] = useState<number | null>(null);
   const [sequencerBpm, setSequencerBpm] = useState(DEFAULT_SEQUENCER_BPM);
   const [sequencerClockStepLength, setSequencerClockStepLength] = useState<SequencerStepLength>(
     BASE_SEQUENCER_STEP_LENGTH
@@ -279,6 +282,7 @@ const DrumpadController = () => {
   const localSampleObjectUrlsRef = useRef<Set<string>>(new Set());
   const activeBufferSourcesByPadRef = useRef<Map<number, ActiveOneShotVoice[]>>(new Map());
   const activeLoopBufferSourcesByPadRef = useRef<Map<number, ActiveLoopVoice>>(new Map());
+  const activeMetronomeSourcesRef = useRef<Set<OscillatorNode>>(new Set());
   const previewBufferSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const outputCompressorRef = useRef<DynamicsCompressorNode | null>(null);
   const outputCompressorContextRef = useRef<AudioContext | null>(null);
@@ -296,6 +300,10 @@ const DrumpadController = () => {
   const padStepOctavesRef = useRef<PadStepOctaves>({});
   const padStepLengthRef = useRef<PadStepLength>({});
   const currentTickRef = useRef(0);
+  const isRecordingRef = useRef(false);
+  const isMetronomeEnabledRef = useRef(false);
+  const countInTimeoutsRef = useRef<number[]>([]);
+  const isCountInActiveRef = useRef(false);
   const scheduledTickVisualTimeoutsRef = useRef<number[]>([]);
   const padButtonElementsRef = useRef<Map<number, HTMLButtonElement>>(new Map());
   const padFlashTimeoutsRef = useRef<Map<number, number>>(new Map());
@@ -430,6 +438,8 @@ const DrumpadController = () => {
   padStepLengthRef.current = padStepLength;
   currentTickRef.current = currentStep;
   isPlayingRef.current = isPlaying;
+  isRecordingRef.current = isRecording;
+  isMetronomeEnabledRef.current = isMetronomeEnabled;
 
   useEffect(() => {
     setPadVolumes(createInitialPadVolumes(DRUM_PADS));
@@ -530,9 +540,11 @@ const DrumpadController = () => {
       activePatternId,
       sequencerBpm,
       sequencerClockStepLength,
+      isMetronomeEnabled,
     };
   }, [
     activePatternId,
+    isMetronomeEnabled,
     masterVolume,
     padLoopEnabled,
     padNames,
@@ -1027,6 +1039,162 @@ const DrumpadController = () => {
     activeBufferSourcesByPadRef.current.clear();
   }, []);
 
+  const stopAllMetronomeSources = useCallback(() => {
+    const context = audioContextRef.current;
+    const stopTime = context?.currentTime;
+
+    activeMetronomeSourcesRef.current.forEach((source) => {
+      try {
+        source.stop(typeof stopTime === "number" ? stopTime : undefined);
+      } catch {
+        // Ignore stop errors if source already ended.
+      }
+    });
+    activeMetronomeSourcesRef.current.clear();
+  }, []);
+
+  const scheduleMetronomeTone = useCallback(
+    (
+      context: AudioContext,
+      scheduledTime: number,
+      isAccent: boolean,
+      metronomeGainLevel: number
+    ) => {
+      const source = context.createOscillator();
+      const gainNode = context.createGain();
+      const outputNode = getOutputNode(context);
+      const toneDurationSeconds = isAccent ? 0.07 : 0.05;
+
+      source.type = "triangle";
+      source.frequency.setValueAtTime(isAccent ? 1680 : 1220, scheduledTime);
+
+      gainNode.gain.setValueAtTime(0.0001, scheduledTime);
+      gainNode.gain.exponentialRampToValueAtTime(
+        Math.max(0.0001, metronomeGainLevel),
+        scheduledTime + 0.002
+      );
+      gainNode.gain.exponentialRampToValueAtTime(
+        0.0001,
+        scheduledTime + toneDurationSeconds
+      );
+
+      source.connect(gainNode);
+      gainNode.connect(outputNode);
+
+      activeMetronomeSourcesRef.current.add(source);
+      source.onended = () => {
+        activeMetronomeSourcesRef.current.delete(source);
+      };
+
+      source.start(scheduledTime);
+      source.stop(scheduledTime + toneDurationSeconds + 0.001);
+    },
+    [getOutputNode]
+  );
+
+  const clearCountInTimeouts = useCallback(() => {
+    countInTimeoutsRef.current.forEach((timeoutId) => {
+      window.clearTimeout(timeoutId);
+    });
+    countInTimeoutsRef.current = [];
+  }, []);
+
+  const cancelCountIn = useCallback(() => {
+    isCountInActiveRef.current = false;
+    clearCountInTimeouts();
+    stopAllMetronomeSources();
+    setCountInBeatsRemaining(null);
+  }, [clearCountInTimeouts, stopAllMetronomeSources]);
+
+  const startRecordCountIn = useCallback(() => {
+    if (isCountInActiveRef.current || isPlayingRef.current) {
+      return;
+    }
+
+    const context = getAudioContext();
+    if (!context) {
+      return;
+    }
+
+    const startCountInScheduler = () => {
+      if (isCountInActiveRef.current || isPlayingRef.current || !isRecordingRef.current) {
+        return;
+      }
+
+      clearCountInTimeouts();
+      stopAllMetronomeSources();
+      currentTickRef.current = 0;
+      setCurrentStep(0);
+      isCountInActiveRef.current = true;
+      setCountInBeatsRemaining(RECORD_COUNT_IN_BEATS);
+
+      const beatDurationSeconds = 60 / clampSequencerBpm(sequencerBpm);
+      const startTimeSeconds = context.currentTime + 0.04;
+      const metronomeGainLevel = Math.max(0.02, (masterVolume / 100) * 0.24);
+
+      for (let beatIndex = 0; beatIndex < RECORD_COUNT_IN_BEATS; beatIndex += 1) {
+        const beatTimeSeconds = startTimeSeconds + beatIndex * beatDurationSeconds;
+        scheduleMetronomeTone(
+          context,
+          beatTimeSeconds,
+          beatIndex === 0,
+          beatIndex === 0 ? metronomeGainLevel : metronomeGainLevel * 0.8
+        );
+
+        const displayCountdownValue = RECORD_COUNT_IN_BEATS - beatIndex;
+        const updateTimeoutId = window.setTimeout(
+          () => {
+            if (!isCountInActiveRef.current) {
+              return;
+            }
+            setCountInBeatsRemaining(displayCountdownValue);
+          },
+          Math.max(0, (beatTimeSeconds - context.currentTime) * 1000)
+        );
+        countInTimeoutsRef.current.push(updateTimeoutId);
+      }
+
+      const startPlaybackTimeoutId = window.setTimeout(
+        () => {
+          if (!isCountInActiveRef.current || !isRecordingRef.current) {
+            return;
+          }
+
+          isCountInActiveRef.current = false;
+          clearCountInTimeouts();
+          stopAllMetronomeSources();
+          setCountInBeatsRemaining(null);
+          currentTickRef.current = 0;
+          setCurrentStep(0);
+          setIsPlaying(true);
+        },
+        Math.max(0, (startTimeSeconds + RECORD_COUNT_IN_BEATS * beatDurationSeconds - context.currentTime) * 1000)
+      );
+      countInTimeoutsRef.current.push(startPlaybackTimeoutId);
+    };
+
+    if (context.state === "suspended") {
+      void context
+        .resume()
+        .then(() => {
+          startCountInScheduler();
+        })
+        .catch(() => {
+          // Ignore resume failures; next interaction can retry.
+        });
+      return;
+    }
+
+    startCountInScheduler();
+  }, [
+    clearCountInTimeouts,
+    getAudioContext,
+    masterVolume,
+    scheduleMetronomeTone,
+    sequencerBpm,
+    stopAllMetronomeSources,
+  ]);
+
   const playLoopBufferSource = useCallback(
     (
       context: AudioContext,
@@ -1326,21 +1494,34 @@ const DrumpadController = () => {
   );
 
   const handleTogglePlayback = useCallback(() => {
-    setIsPlaying((previous) => {
-      const nextIsPlaying = !previous;
-      if (!nextIsPlaying) {
-        stopAllLoopBufferSources();
-        stopAllOneShotBufferSources();
-        stopPreviewBufferSource();
-        clearScheduledTickVisualTimeouts();
-      } else {
-        currentTickRef.current = 0;
-        setCurrentStep(0);
-      }
-      return nextIsPlaying;
-    });
+    if (isCountInActiveRef.current) {
+      cancelCountIn();
+      return;
+    }
+
+    if (isPlayingRef.current) {
+      setIsPlaying(false);
+      stopAllLoopBufferSources();
+      stopAllOneShotBufferSources();
+      stopAllMetronomeSources();
+      stopPreviewBufferSource();
+      clearScheduledTickVisualTimeouts();
+      return;
+    }
+
+    if (isMetronomeEnabledRef.current && isRecordingRef.current) {
+      startRecordCountIn();
+      return;
+    }
+
+    currentTickRef.current = 0;
+    setCurrentStep(0);
+    setIsPlaying(true);
   }, [
+    cancelCountIn,
     clearScheduledTickVisualTimeouts,
+    startRecordCountIn,
+    stopAllMetronomeSources,
     stopAllLoopBufferSources,
     stopAllOneShotBufferSources,
     stopPreviewBufferSource,
@@ -1561,8 +1742,27 @@ const DrumpadController = () => {
   }, []);
 
   const handleToggleRecording = useCallback(() => {
-    setIsRecording((previous) => !previous);
-  }, []);
+    setIsRecording((previous) => {
+      const nextRecording = !previous;
+      if (!nextRecording && isCountInActiveRef.current) {
+        cancelCountIn();
+      }
+      return nextRecording;
+    });
+  }, [cancelCountIn]);
+
+  const handleToggleMetronome = useCallback(() => {
+    setIsMetronomeEnabled((previous) => {
+      const nextEnabled = !previous;
+      if (!nextEnabled) {
+        if (isCountInActiveRef.current) {
+          cancelCountIn();
+        }
+        stopAllMetronomeSources();
+      }
+      return nextEnabled;
+    });
+  }, [cancelCountIn, stopAllMetronomeSources]);
 
   const recordPadStepAtQuantizedTick = useCallback(
     (padId: number, transposeSemitoneOffset = 0) => {
@@ -1630,11 +1830,24 @@ const DrumpadController = () => {
       sequencerClockStepLength,
       BASE_SEQUENCER_STEP_LENGTH
     );
+    const metronomeTicksPerBeat = getStepLengthTickMultiplier("1/4", sequencerClockStepLength);
+    const metronomeTicksPerBar = metronomeTicksPerBeat * 4;
+    const metronomeGainLevel = Math.max(0.02, (masterVolume / 100) * 0.24);
     const secondsPerTick =
       (getSequencerStepDurationMs(sequencerBpm, sequencerEngineStepLength) / 1000) *
       clockRateMultiplier;
 
     const scheduleTickPlayback = (tick: number, tickTimeSeconds: number) => {
+      if (isMetronomeEnabled && tick % metronomeTicksPerBeat === 0) {
+        const isAccentTick = tick % metronomeTicksPerBar === 0;
+        scheduleMetronomeTone(
+          context,
+          tickTimeSeconds,
+          isAccentTick,
+          isAccentTick ? metronomeGainLevel : metronomeGainLevel * 0.8
+        );
+      }
+
       const triggeredPadIds: number[] = [];
       Object.entries(padStepSequenceRef.current).forEach(([padIdRaw, steps]) => {
         const padId = Number(padIdRaw);
@@ -1731,6 +1944,7 @@ const DrumpadController = () => {
       if (schedulerIntervalId) {
         window.clearInterval(schedulerIntervalId);
       }
+      stopAllMetronomeSources();
       clearScheduledTickVisualTimeouts();
     };
   }, [
@@ -1738,9 +1952,13 @@ const DrumpadController = () => {
     flashPadVisual,
     getAudioContext,
     isPlaying,
+    isMetronomeEnabled,
+    masterVolume,
+    scheduleMetronomeTone,
     sequencerBpm,
     sequencerClockStepLength,
     sequencerEngineStepLength,
+    stopAllMetronomeSources,
   ]);
 
   useEffect(() => {
@@ -1781,6 +1999,12 @@ const DrumpadController = () => {
     recordPadStepAtQuantizedTick,
   ]);
 
+  useEffect(() => {
+    if (!isRecording && isCountInActiveRef.current) {
+      cancelCountIn();
+    }
+  }, [cancelCountIn, isRecording]);
+
   const handleClearSequence = () => {
     const defaultPattern = createDefaultSequencerPattern();
     const defaultPadVolumes = createInitialPadVolumes(DRUM_PADS);
@@ -1793,6 +2017,7 @@ const DrumpadController = () => {
     const defaultPadStepOctaves = clonePadStepOctaves(defaultPattern.padStepOctaves);
     const defaultPadStepLength = clonePadStepLength(defaultPattern.padStepLength);
 
+    cancelCountIn();
     stopAllLoopBufferSources();
     stopAllOneShotBufferSources();
     stopPreviewBufferSource();
@@ -1801,6 +2026,7 @@ const DrumpadController = () => {
     setCurrentStep(0);
     setIsPlaying(false);
     setIsRecording(false);
+    setIsMetronomeEnabled(false);
     setMasterVolume(DEFAULT_PAD_VOLUME);
     setPadVolumes(defaultPadVolumes);
     setPadNames(defaultPadNames);
@@ -2182,7 +2408,9 @@ const DrumpadController = () => {
         nextPatterns.find((pattern) => pattern.id === candidateProjectState.activePatternId) ??
         nextPatterns[0];
 
+      cancelCountIn();
       stopAllLoopBufferSources();
+      stopAllMetronomeSources();
       currentTickRef.current = 0;
       setCurrentStep(0);
       setIsPlaying(false);
@@ -2236,13 +2464,16 @@ const DrumpadController = () => {
           ? candidateProjectState.sequencerClockStepLength
           : BASE_SEQUENCER_STEP_LENGTH
       );
+      setIsMetronomeEnabled(Boolean(candidateProjectState.isMetronomeEnabled));
     },
     [
+      cancelCountIn,
       normalizePadStepLength,
       normalizePadStepOctaves,
       normalizePadSampleSettingsMap,
       normalizePadStepSequence,
       normalizeSequencerPatterns,
+      stopAllMetronomeSources,
       stopAllLoopBufferSources,
       warmAssignedSamples,
     ]
@@ -3429,8 +3660,11 @@ const DrumpadController = () => {
 
   useEffect(() => {
     return () => {
+      isCountInActiveRef.current = false;
+      clearCountInTimeouts();
       stopAllLoopBufferSources();
       stopAllOneShotBufferSources();
+      stopAllMetronomeSources();
       stopPreviewBufferSource();
       clearScheduledTickVisualTimeouts();
 
@@ -3456,7 +3690,9 @@ const DrumpadController = () => {
       importedSampleObjectUrlsRef.current.clear();
     };
   }, [
+    clearCountInTimeouts,
     clearScheduledTickVisualTimeouts,
+    stopAllMetronomeSources,
     stopAllLoopBufferSources,
     stopAllOneShotBufferSources,
     stopPreviewBufferSource,
@@ -3494,12 +3730,14 @@ const DrumpadController = () => {
               currentTick={currentStep}
               isPlaying={isPlaying}
               isRecording={isRecording}
+              isMetronomeEnabled={isMetronomeEnabled}
               getCurrentTransposeSemitoneOffset={getCurrentTransposeSemitoneOffset}
               bpm={sequencerBpm}
               clockStepLength={sequencerClockStepLength}
               engineStepLength={sequencerEngineStepLength}
               onTogglePlayback={handleTogglePlayback}
               onToggleRecording={handleToggleRecording}
+              onToggleMetronome={handleToggleMetronome}
               onAddPattern={handleAddSequencerPattern}
               onDuplicatePattern={handleDuplicateSequencerPattern}
               onDeletePattern={handleDeleteSequencerPattern}
@@ -3574,6 +3812,15 @@ const DrumpadController = () => {
           </div>
         </div>
       </div>
+      {countInBeatsRemaining !== null ? (
+        <div className="fixed inset-0 z-[1400] pointer-events-none flex items-center justify-center bg-[radial-gradient(circle_at_50%_50%,rgba(255,140,43,0.16),rgba(7,10,18,0.68)_62%)] backdrop-blur-[2px]">
+          <div className="relative flex flex-col items-center gap-3">
+            <div className="text-[#ff8c2b] text-[30vw] sm:text-[20vw] lg:text-[13vw] leading-none font-black tracking-[0.04em] drop-shadow-[0_0_26px_rgba(255,140,43,0.65)]">
+              {countInBeatsRemaining}
+            </div>
+          </div>
+        </div>
+      ) : null}
       <PadSampleAssignModal
         isOpen={Boolean(sampleAssignPad)}
         padName={sampleAssignPad ? padNames[sampleAssignPad.id] ?? sampleAssignPad.label : ""}

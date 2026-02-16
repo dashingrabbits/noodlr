@@ -24,6 +24,14 @@ export const getRecordButtonClassName = (isRecording: boolean): string => {
   return `${transportButtonBaseClassName} bg-[#d4d4ce] border-[#a8aba5] text-[#515a6a] hover:bg-[#c6c6bf]`;
 };
 
+export const getMetronomeButtonClassName = (isMetronomeEnabled: boolean): string => {
+  if (isMetronomeEnabled) {
+    return `${transportButtonBaseClassName} bg-[#ff8c2b] border-[#cc6e20] text-white hover:bg-[#ff9b45]`;
+  }
+
+  return `${transportButtonBaseClassName} bg-[#d4d4ce] border-[#a8aba5] text-[#515a6a] hover:bg-[#c6c6bf]`;
+};
+
 export const addPatternButtonClassName =
   `${transportButtonBaseClassName} bg-[#515a6a] border-[#3f4653] text-[#f7f7f5] hover:bg-[#454d5b]`;
 export const sequencerToggleButtonClassName =

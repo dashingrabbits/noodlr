@@ -9,4 +9,4 @@ export const sampleListClassName =
 export const sampleRowClassName =
   "w-full text-left rounded-md border border-[#b8b5aa] bg-[#f6f5ef] hover:bg-[#fff9ef] transition-colors px-3 py-2 mb-2 last:mb-0";
 export const categoryBadgeClassName =
-  "inline-flex items-center rounded-full border border-[#d79f60] bg-[#ffd19c] px-2 py-0.5 text-[10px] font-bold text-[#515a6a]";
+  "inline-flex items-center rounded-full bg-[#ff8c2b] px-2 py-0.5 text-[10px] text-white";

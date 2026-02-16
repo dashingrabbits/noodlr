@@ -23,12 +23,14 @@ export interface StepSequencerProps {
   currentTick: number;
   isPlaying: boolean;
   isRecording: boolean;
+  isMetronomeEnabled: boolean;
   getCurrentTransposeSemitoneOffset: (eventShiftPressed?: boolean) => number;
   bpm: number;
   clockStepLength: SequencerStepLength;
   engineStepLength: SequencerStepLength;
   onTogglePlayback: () => void;
   onToggleRecording: () => void;
+  onToggleMetronome: () => void;
   onAddPattern: () => void;
   onDuplicatePattern: () => void;
   onDeletePattern: () => void;

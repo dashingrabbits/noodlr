@@ -30,6 +30,7 @@ export interface ProjectState {
   activePatternId: string;
   sequencerBpm: number;
   sequencerClockStepLength: SequencerStepLength;
+  isMetronomeEnabled: boolean;
 }
 
 export interface SavedProject {
