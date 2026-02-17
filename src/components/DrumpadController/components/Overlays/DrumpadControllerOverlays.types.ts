@@ -1,10 +1,11 @@
 import type { ChangeEvent, Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { SavedProject } from "../../../ProjectManager/ProjectManager.types";
-import type { SampleAsset } from "../../../../integrations/samples/sample.types";
+import type { SampleAsset, SampleMetadataOverride } from "../../../../integrations/samples/sample.types";
 import type {
   SessionConnectionStatus,
   SessionJoinRequest,
 } from "../../hooks/session-collaboration";
+import type { SampleMetadataEditorState } from "../../../PadSampleEditorModal";
 import type {
   DrumPadConfig,
   PadAssignedSamples,
@@ -24,6 +25,7 @@ export type DrumpadControllerOverlaysProps = {
   defaultSamplePolyphony: number;
   editingPad: DrumPadConfig | null;
   editingPadSampleBuffer: AudioBuffer | null;
+  editingPadSampleMetadataEditorState: SampleMetadataEditorState | null;
   editingPadSampleId: string;
   effectiveSampleAssets: SampleAsset[];
   handleAssignSampleToSelectedPad: (sampleId: string) => void;
@@ -39,9 +41,12 @@ export type DrumpadControllerOverlaysProps = {
   handlePadSampleSettingsChange: (padId: number, nextSettings: Partial<PadSampleSettings>) => void;
   handlePadVolumeChange: (padId: number, volume: number) => void;
   handlePreviewSample: (sampleId: string) => void;
+  handleResetSampleMetadata: (sampleId: string) => void;
   handleResetPadSampleSettings: (padId: number) => void;
+  handleSampleMetadataEditorOpenChange: (isOpen: boolean) => void;
   handleSampleRootPromptKitFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
   handleSampleRootPromptProjectFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  handleSaveSampleMetadata: (sampleId: string, metadata: SampleMetadataOverride) => void;
   handleSavePadEditorSettingsToSavedKits: () => void;
   handleSubmitOverwriteProject: () => void;
   handleSubmitSampleRootDirPrompt: () => void;
@@ -67,10 +72,13 @@ export type DrumpadControllerOverlaysProps = {
   projectNameMaxLength: number;
   sampleAssignPad: DrumPadConfig | null;
   sampleError: string | null;
+  sampleMetadataEditorState: SampleMetadataEditorState | null;
+  sampleMetadataEditorSampleName: string;
   sampleRootDir: string;
   sampleRootDirDraft: string;
   sampleRootPromptKitInputRef: MutableRefObject<HTMLInputElement | null>;
   sampleRootPromptProjectInputRef: MutableRefObject<HTMLInputElement | null>;
+  isSampleMetadataEditorOpen: boolean;
   selectedProject: SavedProject | null;
   setProjectNameDraft: Dispatch<SetStateAction<string>>;
   setSampleError: Dispatch<SetStateAction<string | null>>;

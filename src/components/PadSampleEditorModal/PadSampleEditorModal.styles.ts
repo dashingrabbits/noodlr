@@ -1,7 +1,7 @@
 export const overlayClassName =
   "fixed inset-0 z-[4000] bg-black/35 backdrop-blur-[1px] data-[state=open]:animate-in data-[state=closed]:animate-out";
 export const contentClassName =
-  "fixed left-1/2 top-1/2 z-[4100] w-[min(92vw,680px)] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-[#a8aba5] bg-[#f6f5ef] p-4 shadow-2xl";
+  "fixed left-1/2 top-1/2 z-[4100] flex max-h-[90vh] w-[min(92vw,680px)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-[#a8aba5] bg-[#f6f5ef] p-4 shadow-2xl";
 export const titleClassName = "text-[#515a6a] text-base font-bold";
 export const subtitleClassName = "text-xs text-[#595959] mt-1";
 export const sectionClassName = "rounded-md border border-[#b8b5aa] bg-[#ecebe6] p-3";

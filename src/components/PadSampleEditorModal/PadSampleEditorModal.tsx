@@ -3,6 +3,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { KnobHeadless, KnobHeadlessLabel, useKnobKeyboardControls } from "react-knob-headless";
 import { ChevronDown, Infinity as InfinityIcon, RotateCcw, Trash2, X } from "lucide-react";
 import type { KnobFieldProps, PadSampleEditorModalProps } from "./PadSampleEditorModal.types";
+import type { SampleCategory } from "../../integrations/samples/sample.types";
+import {
+  getSampleCategoryLabel,
+  parseSampleTagsInput,
+  SAMPLE_CATEGORY_ORDER,
+} from "../../integrations/samples/sample.utilities";
 import {
   createVolumeSliderBackgroundStyle,
   clamp,
@@ -725,6 +731,7 @@ const KnobField = ({
 
 const PadSampleEditorModal = ({
   isOpen,
+  editorMode = "pad",
   padName,
   sampleName,
   sampleBuffer,
@@ -735,6 +742,9 @@ const PadSampleEditorModal = ({
   settings,
   saveToKitsDisabled = false,
   saveToKitsMessage = "",
+  sampleMetadataEditorState = null,
+  onSaveSampleMetadata,
+  onResetSampleMetadata,
   onOpenChange,
   onPadNameChange,
   onPadVolumeChange,
@@ -745,15 +755,40 @@ const PadSampleEditorModal = ({
   onReset,
   onSaveToKits,
 }: PadSampleEditorModalProps) => {
+  const isSampleEditorMode = editorMode === "sample";
   const [activeSection, setActiveSection] = useState<"pad-settings" | "envelope" | "effects">(
     "pad-settings"
   );
+  const [sampleMetadataNameDraft, setSampleMetadataNameDraft] = useState("");
+  const [sampleMetadataCategoryDraft, setSampleMetadataCategoryDraft] =
+    useState<SampleCategory>("uncategorized");
+  const [sampleMetadataTagsDraft, setSampleMetadataTagsDraft] = useState("");
+
+  const sampleCategoryOptions = useMemo(() => {
+    return SAMPLE_CATEGORY_ORDER.map((sampleCategory) => ({
+      value: sampleCategory,
+      label: getSampleCategoryLabel(sampleCategory),
+    }));
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
       setActiveSection("pad-settings");
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!sampleMetadataEditorState) {
+      setSampleMetadataNameDraft("");
+      setSampleMetadataCategoryDraft("uncategorized");
+      setSampleMetadataTagsDraft("");
+      return;
+    }
+
+    setSampleMetadataNameDraft(sampleMetadataEditorState.name);
+    setSampleMetadataCategoryDraft(sampleMetadataEditorState.category);
+    setSampleMetadataTagsDraft(sampleMetadataEditorState.tags.join(", "));
+  }, [sampleMetadataEditorState]);
 
   return (
     <Dialog.Root open={isOpen} onOpenChange={onOpenChange}>
@@ -762,9 +797,13 @@ const PadSampleEditorModal = ({
         <Dialog.Content className={contentClassName}>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <Dialog.Title className={titleClassName}>Pad Sample Editor</Dialog.Title>
+              <Dialog.Title className={titleClassName}>
+                {isSampleEditorMode ? "Sample Editor" : "Pad Sample Editor"}
+              </Dialog.Title>
               <Dialog.Description className={subtitleClassName}>
-                {padName} {sampleName ? `- ${sampleName}` : "- No sample assigned"}
+                {isSampleEditorMode
+                  ? sampleName || "No sample selected"
+                  : `${padName} ${sampleName ? `- ${sampleName}` : "- No sample assigned"}`}
               </Dialog.Description>
             </div>
             <Dialog.Close asChild>
@@ -778,7 +817,7 @@ const PadSampleEditorModal = ({
             </Dialog.Close>
           </div>
 
-          <div className="mt-4 space-y-3">
+          <div className="mt-4 flex-1 space-y-3 overflow-y-auto pr-1">
             <section className={sectionClassName}>
               <button
                 type="button"
@@ -786,7 +825,9 @@ const PadSampleEditorModal = ({
                 onClick={() => setActiveSection("pad-settings")}
                 aria-expanded={activeSection === "pad-settings"}
               >
-                <h4 className={sectionTitleClassName}>Pad Settings</h4>
+                <h4 className={sectionTitleClassName}>
+                  {isSampleEditorMode ? "Sample Settings" : "Pad Settings"}
+                </h4>
                 <ChevronDown
                   size={14}
                   className={`${sectionAccordionIconClassName} ${
@@ -797,94 +838,176 @@ const PadSampleEditorModal = ({
               {activeSection === "pad-settings" ? (
                 <div className={sectionAccordionContentClassName}>
                   <div className={padSettingsGridClassName}>
-                    <label className="sm:col-span-2">
-                      <span className={padFieldLabelClassName}>Pad Name</span>
-                      <input
-                        type="text"
-                        value={padName}
-                        maxLength={PAD_NAME_MAX_LENGTH}
-                        onChange={(event) => onPadNameChange(event.target.value)}
-                        className={padTextInputClassName}
-                      />
-                    </label>
+                    {!isSampleEditorMode ? (
+                      <>
+                        <label className="sm:col-span-2">
+                          <span className={padFieldLabelClassName}>Pad Name</span>
+                          <input
+                            type="text"
+                            value={padName}
+                            maxLength={PAD_NAME_MAX_LENGTH}
+                            onChange={(event) => onPadNameChange(event.target.value)}
+                            className={padTextInputClassName}
+                          />
+                        </label>
 
-                    <div>
-                      <div className="flex items-center justify-between">
-                        <span className={padFieldLabelClassName}>Volume</span>
-                        <span className={padVolumeValueClassName}>{toVolumePercent(padVolume)}</span>
-                      </div>
-                      <input
-                        type="range"
-                        min={0}
-                        max={100}
-                        value={padVolume}
-                        onChange={(event) => onPadVolumeChange(Number(event.target.value))}
-                        style={createVolumeSliderBackgroundStyle(padVolume)}
-                        className={padVolumeSliderClassName}
-                      />
-                    </div>
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <span className={padFieldLabelClassName}>Volume</span>
+                            <span className={padVolumeValueClassName}>{toVolumePercent(padVolume)}</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            value={padVolume}
+                            onChange={(event) => onPadVolumeChange(Number(event.target.value))}
+                            style={createVolumeSliderBackgroundStyle(padVolume)}
+                            className={padVolumeSliderClassName}
+                          />
+                        </div>
 
-                    <label>
-                      <span className={padFieldLabelClassName}>Polyphony</span>
-                      <select
-                        value={padPolyphony}
-                        onChange={(event) => onPadPolyphonyChange(Number(event.target.value))}
-                        className={padSelectClassName}
-                      >
-                        {Array.from(
-                          { length: MAX_SAMPLE_POLYPHONY - MIN_SAMPLE_POLYPHONY + 1 },
-                          (_, index) => MIN_SAMPLE_POLYPHONY + index
-                        ).map((voiceCount) => (
-                          <option key={voiceCount} value={voiceCount}>
-                            {voiceCount}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                        <label>
+                          <span className={padFieldLabelClassName}>Polyphony</span>
+                          <select
+                            value={padPolyphony}
+                            onChange={(event) => onPadPolyphonyChange(Number(event.target.value))}
+                            className={padSelectClassName}
+                          >
+                            {Array.from(
+                              { length: MAX_SAMPLE_POLYPHONY - MIN_SAMPLE_POLYPHONY + 1 },
+                              (_, index) => MIN_SAMPLE_POLYPHONY + index
+                            ).map((voiceCount) => (
+                              <option key={voiceCount} value={voiceCount}>
+                                {voiceCount}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
 
-                    <div>
-                      <span className={padFieldLabelClassName}>Loop</span>
-                      <button
-                        type="button"
-                        className={getPadLoopToggleButtonClassName(isLoopEnabled)}
-                        onClick={onPadLoopToggle}
-                      >
-                        <InfinityIcon size={12} />
-                        {isLoopEnabled ? "Enabled" : "Disabled"}
-                      </button>
-                    </div>
+                        <div>
+                          <span className={padFieldLabelClassName}>Loop</span>
+                          <button
+                            type="button"
+                            className={getPadLoopToggleButtonClassName(isLoopEnabled)}
+                            onClick={onPadLoopToggle}
+                          >
+                            <InfinityIcon size={12} />
+                            {isLoopEnabled ? "Enabled" : "Disabled"}
+                          </button>
+                        </div>
+                      </>
+                    ) : null}
 
                     <div className="sm:col-span-2">
                       <span className={padFieldLabelClassName}>Sample</span>
                       <div className={padSampleRowClassName}>
-                        <div className={padSampleNameClassName}>{sampleName || "No sample assigned"}</div>
-                        <button
-                          type="button"
-                          className={padSampleClearButtonClassName}
-                          onClick={onPadSampleClear}
-                          disabled={!sampleName}
-                        >
-                          <Trash2 size={11} className="inline mr-1" />
-                          Clear
-                        </button>
+                        <div className={padSampleNameClassName}>{sampleName || "No sample selected"}</div>
+                        {!isSampleEditorMode ? (
+                          <button
+                            type="button"
+                            className={padSampleClearButtonClassName}
+                            onClick={onPadSampleClear}
+                            disabled={!sampleName}
+                          >
+                            <Trash2 size={11} className="inline mr-1" />
+                            Clear
+                          </button>
+                        ) : null}
                       </div>
                     </div>
 
-                    <div className="sm:col-span-2">
-                      <SampleTrimEditor
-                        sampleBuffer={sampleBuffer}
-                        isSampleBufferLoading={isSampleBufferLoading}
-                        sampleStart={settings.sampleStart}
-                        sampleEnd={settings.sampleEnd}
-                        onChange={onChange}
-                      />
-                    </div>
+                    {sampleMetadataEditorState ? (
+                      <div className="sm:col-span-2 space-y-2 rounded-md border border-[#b8b5aa] bg-[#f4f3ee] p-3">
+                        <label>
+                          <span className={padFieldLabelClassName}>Sample Name</span>
+                          <input
+                            type="text"
+                            value={sampleMetadataNameDraft}
+                            onChange={(event) => setSampleMetadataNameDraft(event.target.value)}
+                            className={padTextInputClassName}
+                          />
+                        </label>
+                        <label>
+                          <span className={padFieldLabelClassName}>Category</span>
+                          <select
+                            value={sampleMetadataCategoryDraft}
+                            onChange={(event) =>
+                              setSampleMetadataCategoryDraft(event.target.value as SampleCategory)
+                            }
+                            className={padSelectClassName}
+                          >
+                            {sampleCategoryOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          <span className={padFieldLabelClassName}>Tags (comma-separated)</span>
+                          <input
+                            type="text"
+                            value={sampleMetadataTagsDraft}
+                            onChange={(event) => setSampleMetadataTagsDraft(event.target.value)}
+                            className={padTextInputClassName}
+                          />
+                        </label>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className={saveMetaButtonClassName}
+                            onClick={() => {
+                              if (!onSaveSampleMetadata) {
+                                return;
+                              }
+
+                              onSaveSampleMetadata(sampleMetadataEditorState.sampleId, {
+                                name: sampleMetadataNameDraft.trim(),
+                                category: sampleMetadataCategoryDraft,
+                                tags: parseSampleTagsInput(sampleMetadataTagsDraft),
+                              });
+                            }}
+                            disabled={!onSaveSampleMetadata}
+                          >
+                            Save Metadata
+                          </button>
+                          <button
+                            type="button"
+                            className={secondaryButtonClassName}
+                            onClick={() => {
+                              if (!onResetSampleMetadata) {
+                                return;
+                              }
+
+                              onResetSampleMetadata(sampleMetadataEditorState.sampleId);
+                            }}
+                            disabled={!onResetSampleMetadata}
+                          >
+                            Reset Metadata
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {!isSampleEditorMode ? (
+                      <div className="sm:col-span-2">
+                        <SampleTrimEditor
+                          sampleBuffer={sampleBuffer}
+                          isSampleBufferLoading={isSampleBufferLoading}
+                          sampleStart={settings.sampleStart}
+                          sampleEnd={settings.sampleEnd}
+                          onChange={onChange}
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
             </section>
 
-            <section className={sectionClassName}>
+            {!isSampleEditorMode ? (
+              <section className={sectionClassName}>
               <button
                 type="button"
                 className={sectionAccordionTriggerClassName}
@@ -948,9 +1071,11 @@ const PadSampleEditorModal = ({
                   </div>
                 </div>
               ) : null}
-            </section>
+              </section>
+            ) : null}
 
-            <section className={sectionClassName}>
+            {!isSampleEditorMode ? (
+              <section className={sectionClassName}>
               <button
                 type="button"
                 className={sectionAccordionTriggerClassName}
@@ -1011,7 +1136,8 @@ const PadSampleEditorModal = ({
                   </div>
                 </div>
               ) : null}
-            </section>
+              </section>
+            ) : null}
           </div>
 
           <div className={footerClassName}>
@@ -1020,18 +1146,22 @@ const PadSampleEditorModal = ({
                 <span className={saveMetaMessageClassName}>{saveToKitsMessage}</span>
               ) : null}
             </div>
-            <button
-              type="button"
-              className={saveMetaButtonClassName}
-              onClick={onSaveToKits}
-              disabled={saveToKitsDisabled}
-            >
-              Save To Kits
-            </button>
-            <button type="button" className={secondaryButtonClassName} onClick={onReset}>
-              <RotateCcw size={12} className="inline mr-1" />
-              Reset
-            </button>
+            {!isSampleEditorMode ? (
+              <>
+                <button
+                  type="button"
+                  className={saveMetaButtonClassName}
+                  onClick={onSaveToKits}
+                  disabled={saveToKitsDisabled}
+                >
+                  Save To Kits
+                </button>
+                <button type="button" className={secondaryButtonClassName} onClick={onReset}>
+                  <RotateCcw size={12} className="inline mr-1" />
+                  Reset
+                </button>
+              </>
+            ) : null}
             <Dialog.Close asChild>
               <button type="button" className={primaryButtonClassName}>
                 Done

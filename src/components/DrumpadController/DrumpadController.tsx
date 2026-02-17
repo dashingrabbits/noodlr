@@ -204,6 +204,9 @@ const DrumpadController = () => {
   const [editingPadId, setEditingPadId] = useState<number | null>(null);
   const [editingPadSampleBuffer, setEditingPadSampleBuffer] = useState<AudioBuffer | null>(null);
   const [isEditingPadSampleBufferLoading, setIsEditingPadSampleBufferLoading] = useState(false);
+  const [sampleMetadataEditorSampleId, setSampleMetadataEditorSampleId] = useState<string | null>(
+    null
+  );
   const [sampleAssignPadId, setSampleAssignPadId] = useState<number | null>(null);
   const [padEditorSaveMessage, setPadEditorSaveMessage] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState("");
@@ -380,6 +383,38 @@ const DrumpadController = () => {
     sequencerPatterns,
     songArrangement,
   });
+
+  const sampleMetadataEditorSample = sampleMetadataEditorSampleId
+    ? sampleAssetsById.get(sampleMetadataEditorSampleId) ?? null
+    : null;
+
+  const editingPadSampleMetadataEditorState = editingPadSample
+    ? {
+        sampleId: editingPadSample.id,
+        name: editingPadSample.name,
+        category: editingPadSample.category,
+        tags: editingPadSample.tags,
+      }
+    : null;
+
+  const sampleMetadataEditorState = sampleMetadataEditorSample
+    ? {
+        sampleId: sampleMetadataEditorSample.id,
+        name: sampleMetadataEditorSample.name,
+        category: sampleMetadataEditorSample.category,
+        tags: sampleMetadataEditorSample.tags,
+      }
+    : null;
+
+  useEffect(() => {
+    if (!sampleMetadataEditorSampleId) {
+      return;
+    }
+
+    if (!sampleAssetsById.has(sampleMetadataEditorSampleId)) {
+      setSampleMetadataEditorSampleId(null);
+    }
+  }, [sampleAssetsById, sampleMetadataEditorSampleId]);
 
   useRefSynchronization({
     activePadGroupId,
@@ -887,6 +922,16 @@ const DrumpadController = () => {
     setSampleMetadataOverrides,
   });
 
+  const handleOpenSampleMetadataEditor = useCallback((sampleId: string) => {
+    setSampleMetadataEditorSampleId(sampleId);
+  }, []);
+
+  const handleSampleMetadataEditorOpenChange = useCallback((isOpen: boolean) => {
+    if (!isOpen) {
+      setSampleMetadataEditorSampleId(null);
+    }
+  }, []);
+
   const {
     clearLocalSampleObjectUrls,
     handleOpenSampleRootPromptKitImport,
@@ -1207,8 +1252,7 @@ const DrumpadController = () => {
               onSearchChange={handleSampleSearchChange}
               onRefreshSamples={handleRefreshSampleAssets}
               onPreviewSample={handlePreviewSample}
-              onSaveSampleMetadata={handleSaveSampleMetadata}
-              onResetSampleMetadata={handleResetSampleMetadata}
+              onOpenSampleEditor={handleOpenSampleMetadataEditor}
             />
           </div>
         </div>
@@ -1221,6 +1265,7 @@ const DrumpadController = () => {
         defaultSamplePolyphony={DEFAULT_SAMPLE_POLYPHONY}
         editingPad={editingPad as DrumPadConfig | null}
         editingPadSampleBuffer={editingPadSampleBuffer}
+        editingPadSampleMetadataEditorState={editingPadSampleMetadataEditorState}
         editingPadSampleId={editingPadSampleId}
         effectiveSampleAssets={effectiveSampleAssets}
         handleAssignSampleToSelectedPad={handleAssignSampleToSelectedPad}
@@ -1236,9 +1281,12 @@ const DrumpadController = () => {
         handlePadSampleSettingsChange={handlePadSampleSettingsChange}
         handlePadVolumeChange={handlePadVolumeChange}
         handlePreviewSample={handlePreviewSample}
+        handleResetSampleMetadata={handleResetSampleMetadata}
         handleResetPadSampleSettings={handleResetPadSampleSettings}
+        handleSampleMetadataEditorOpenChange={handleSampleMetadataEditorOpenChange}
         handleSampleRootPromptKitFileChange={handleSampleRootPromptKitFileChange}
         handleSampleRootPromptProjectFileChange={handleSampleRootPromptProjectFileChange}
+        handleSaveSampleMetadata={handleSaveSampleMetadata}
         handleSavePadEditorSettingsToSavedKits={handleSavePadEditorSettingsToSavedKits}
         handleSubmitOverwriteProject={handleSubmitOverwriteProject}
         handleSubmitSampleRootDirPrompt={handleSubmitSampleRootDirPrompt}
@@ -1264,10 +1312,13 @@ const DrumpadController = () => {
         projectNameMaxLength={PROJECT_NAME_MAX_LENGTH}
         sampleAssignPad={sampleAssignPad as DrumPadConfig | null}
         sampleError={sampleError}
+        sampleMetadataEditorState={sampleMetadataEditorState}
+        sampleMetadataEditorSampleName={sampleMetadataEditorSample?.name ?? ""}
         sampleRootDir={sampleRootDir}
         sampleRootDirDraft={sampleRootDirDraft}
         sampleRootPromptKitInputRef={sampleRootPromptKitInputRef}
         sampleRootPromptProjectInputRef={sampleRootPromptProjectInputRef}
+        isSampleMetadataEditorOpen={Boolean(sampleMetadataEditorSampleId)}
         selectedProject={selectedProject}
         setProjectNameDraft={setProjectNameDraft}
         setSampleError={setSampleError}

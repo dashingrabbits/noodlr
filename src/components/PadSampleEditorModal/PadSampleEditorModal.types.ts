@@ -1,7 +1,19 @@
+import type {
+  SampleCategory,
+  SampleMetadataOverride,
+} from "../../integrations/samples/sample.types";
 import type { PadSampleSettings } from "../DrumpadController/DrumpadController.types";
+
+export interface SampleMetadataEditorState {
+  sampleId: string;
+  name: string;
+  category: SampleCategory;
+  tags: string[];
+}
 
 export interface PadSampleEditorModalProps {
   isOpen: boolean;
+  editorMode?: "pad" | "sample";
   padName: string;
   sampleName: string;
   sampleBuffer: AudioBuffer | null;
@@ -12,6 +24,9 @@ export interface PadSampleEditorModalProps {
   settings: PadSampleSettings;
   saveToKitsDisabled?: boolean;
   saveToKitsMessage?: string;
+  sampleMetadataEditorState?: SampleMetadataEditorState | null;
+  onSaveSampleMetadata?: (sampleId: string, metadata: SampleMetadataOverride) => void;
+  onResetSampleMetadata?: (sampleId: string) => void;
   onOpenChange: (isOpen: boolean) => void;
   onPadNameChange: (name: string) => void;
   onPadVolumeChange: (volume: number) => void;

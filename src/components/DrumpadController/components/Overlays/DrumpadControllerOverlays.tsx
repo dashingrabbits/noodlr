@@ -16,6 +16,7 @@ const DrumpadControllerOverlays = ({
   defaultSamplePolyphony,
   editingPad,
   editingPadSampleBuffer,
+  editingPadSampleMetadataEditorState,
   editingPadSampleId,
   effectiveSampleAssets,
   handleAssignSampleToSelectedPad,
@@ -31,9 +32,12 @@ const DrumpadControllerOverlays = ({
   handlePadSampleSettingsChange,
   handlePadVolumeChange,
   handlePreviewSample,
+  handleResetSampleMetadata,
   handleResetPadSampleSettings,
+  handleSampleMetadataEditorOpenChange,
   handleSampleRootPromptKitFileChange,
   handleSampleRootPromptProjectFileChange,
+  handleSaveSampleMetadata,
   handleSavePadEditorSettingsToSavedKits,
   handleSubmitOverwriteProject,
   handleSubmitSampleRootDirPrompt,
@@ -59,10 +63,13 @@ const DrumpadControllerOverlays = ({
   projectNameMaxLength,
   sampleAssignPad,
   sampleError,
+  sampleMetadataEditorState,
+  sampleMetadataEditorSampleName,
   sampleRootDir,
   sampleRootDirDraft,
   sampleRootPromptKitInputRef,
   sampleRootPromptProjectInputRef,
+  isSampleMetadataEditorOpen,
   selectedProject,
   setProjectNameDraft,
   setSampleError,
@@ -75,6 +82,7 @@ const DrumpadControllerOverlays = ({
   onClearSongModeStatusMessage,
   onJoinSessionFromPrompt,
 }: DrumpadControllerOverlaysProps) => {
+  const noop = useCallback(() => undefined, []);
   const [isJoinPromptExpanded, setIsJoinPromptExpanded] = useState(false);
   const [joinSessionIdDraft, setJoinSessionIdDraft] = useState("");
   const [joinUsernameDraft, setJoinUsernameDraft] = useState("");
@@ -138,6 +146,9 @@ const DrumpadControllerOverlays = ({
         }
         saveToKitsDisabled={!editingPadSampleId}
         saveToKitsMessage={padEditorSaveMessage}
+        sampleMetadataEditorState={editingPadSampleMetadataEditorState}
+        onSaveSampleMetadata={handleSaveSampleMetadata}
+        onResetSampleMetadata={handleResetSampleMetadata}
         onOpenChange={handlePadSampleEditorOpenChange}
         onPadNameChange={(nextName) => {
           if (!editingPad) {
@@ -189,6 +200,30 @@ const DrumpadControllerOverlays = ({
           handleResetPadSampleSettings(editingPad.id);
         }}
         onSaveToKits={handleSavePadEditorSettingsToSavedKits}
+      />
+      <PadSampleEditorModal
+        isOpen={isSampleMetadataEditorOpen}
+        editorMode="sample"
+        padName=""
+        sampleName={sampleMetadataEditorSampleName}
+        sampleBuffer={null}
+        isSampleBufferLoading={false}
+        padVolume={defaultPadVolume}
+        padPolyphony={defaultSamplePolyphony}
+        isLoopEnabled={false}
+        settings={defaultPadSampleSettings}
+        sampleMetadataEditorState={sampleMetadataEditorState}
+        onSaveSampleMetadata={handleSaveSampleMetadata}
+        onResetSampleMetadata={handleResetSampleMetadata}
+        onOpenChange={handleSampleMetadataEditorOpenChange}
+        onPadNameChange={noop}
+        onPadVolumeChange={noop}
+        onPadPolyphonyChange={noop}
+        onPadLoopToggle={noop}
+        onPadSampleClear={noop}
+        onChange={noop}
+        onReset={noop}
+        onSaveToKits={noop}
       />
       <input
         ref={sampleRootPromptProjectInputRef}

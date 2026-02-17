@@ -8,7 +8,11 @@ export const buttonClassName =
 export const sampleListClassName =
   "flex-1 overflow-y-auto rounded-md border border-[#a8aba5] bg-[#f7f6f2] p-2 space-y-2 min-h-[220px]";
 export const sampleRowBaseClassName =
-  "w-full text-left rounded-md border border-[#b7bab3] bg-[#fbfaf6] px-2 py-2 cursor-grab active:cursor-grabbing hover:border-[#7f8899]";
+  "flex items-start gap-2 rounded-md border border-[#b7bab3] bg-[#fbfaf6] px-2 py-2 hover:border-[#7f8899]";
+export const sampleRowMainButtonClassName =
+  "min-w-0 flex-1 text-left cursor-grab active:cursor-grabbing";
+export const sampleRowEditButtonClassName =
+  "shrink-0 rounded-md border border-[#a8aba5] bg-[#f1f0ea] p-1.5 text-[#515a6a] transition-colors hover:bg-[#e2e2db] hover:text-[#3d4452] focus:outline-none focus:ring-1 focus:ring-[#ff8c2b]";
 export const sampleRowActiveClassName = "ring-1 ring-[#ff8c2b] border-[#ff8c2b]";
 export const badgeClassName =
   "inline-block rounded-full bg-[#ff8c2b] text-white text-[10px] px-2 py-[2px]";

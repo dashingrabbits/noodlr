@@ -1,4 +1,4 @@
-import type { SampleAsset, SampleMetadataOverride } from "../../integrations/samples/sample.types";
+import type { SampleAsset } from "../../integrations/samples/sample.types";
 import type { SessionSharingProps } from "../SessionSharing";
 
 export interface SampleLibrarySidebarProps {
@@ -16,6 +16,5 @@ export interface SampleLibrarySidebarProps {
   onSearchChange: (value: string) => void;
   onRefreshSamples: () => void;
   onPreviewSample: (sampleId: string) => void;
-  onSaveSampleMetadata: (sampleId: string, metadata: SampleMetadataOverride) => void;
-  onResetSampleMetadata: (sampleId: string) => void;
+  onOpenSampleEditor: (sampleId: string) => void;
 }
