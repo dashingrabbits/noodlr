@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useState } from "react";
-import { Copy, Download, Link2, LogIn, LogOut, Share2, Trash2 } from "lucide-react";
+import { Copy, Download, Link2, LogIn, LogOut, Send, Share2, Trash2 } from "lucide-react";
 import type { SessionSharingProps } from "./SessionSharing.types";
 import {
   sessionCardClassName,
@@ -17,6 +17,7 @@ const SessionSharing = ({
   sessionId,
   isSessionHost,
   isSessionEndPromptOpen,
+  sessionChatMessages,
   sessionParticipants,
   onClearSessionError,
   onCopySessionId,
@@ -26,10 +27,12 @@ const SessionSharing = ({
   onKickSessionUser,
   onLeaveSession,
   onResolveSessionEndPrompt,
+  onSendChatMessage,
   onShareSession,
 }: SessionSharingProps) => {
   const [joinSessionIdDraft, setJoinSessionIdDraft] = useState("");
   const [joinSessionUserNameDraft, setJoinSessionUserNameDraft] = useState("");
+  const [chatDraft, setChatDraft] = useState("");
   const [isSessionActionPending, setIsSessionActionPending] = useState(false);
 
   const runSessionAction = useCallback(
@@ -59,6 +62,43 @@ const SessionSharing = ({
   const leaveButtonLabel = isSessionHost ? "End Session" : "Leave";
   const isConnected = sessionConnectionStatus === "connected";
   const connectionDotClassName = isConnected ? "bg-[#4f8a2d]" : "bg-[#b13f2f]";
+
+  const formatChatTimestamp = useCallback((timestamp: string) => {
+    const parsedTime = new Date(timestamp);
+    if (Number.isNaN(parsedTime.getTime())) {
+      return "";
+    }
+
+    return parsedTime.toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }, []);
+
+  const handleSubmitChatMessage = useCallback(() => {
+    if (!isConnected || isSessionActionPending) {
+      return;
+    }
+
+    const normalizedMessage = chatDraft.trim();
+    if (!normalizedMessage) {
+      return;
+    }
+
+    onClearSessionError();
+    const didSend = onSendChatMessage(normalizedMessage);
+    if (!didSend) {
+      return;
+    }
+
+    setChatDraft("");
+  }, [
+    chatDraft,
+    isConnected,
+    isSessionActionPending,
+    onClearSessionError,
+    onSendChatMessage,
+  ]);
 
   return (
     <div className={sessionCardClassName}>
@@ -192,6 +232,68 @@ const SessionSharing = ({
           <Link2 size={12} />
           {sessionError}
         </p>
+      ) : null}
+      {isConnected ? (
+        <div className="mt-3 rounded-md border border-[#b8b5aa] bg-[#f4f3ee] p-2">
+          <div className="mb-2 text-[10px] font-bold uppercase tracking-wide text-[#515a6a]">
+            Session Chat
+          </div>
+          <div className="max-h-44 overflow-y-auto rounded-md border border-[#c4c5be] bg-[#fbfaf6] p-2 space-y-2">
+            {sessionChatMessages.length ? (
+              sessionChatMessages.map((chatMessage) => (
+                <div
+                  key={chatMessage.id}
+                  className={`rounded-md px-2 py-1 ${
+                    chatMessage.isSelf ? "bg-[#dde3ed]" : "bg-[#efeee9]"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-bold text-[#515a6a] truncate">
+                      {chatMessage.senderUsername}
+                      {chatMessage.isSelf ? " (You)" : ""}
+                    </span>
+                    <span className="text-[10px] text-[#6a6a6a] shrink-0">
+                      {formatChatTimestamp(chatMessage.createdAt)}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-[11px] text-[#2f2f2f] break-words">{chatMessage.message}</p>
+                </div>
+              ))
+            ) : (
+              <p className="text-[11px] text-[#666]">No messages yet.</p>
+            )}
+          </div>
+          <div className="mt-2 flex gap-2">
+            <input
+              type="text"
+              value={chatDraft}
+              onChange={(event) => setChatDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") {
+                  return;
+                }
+
+                event.preventDefault();
+                handleSubmitChatMessage();
+              }}
+              placeholder="Type a message..."
+              maxLength={500}
+              className={`${sessionInputClassName} flex-1`}
+            />
+            <button
+              type="button"
+              onClick={handleSubmitChatMessage}
+              disabled={!isConnected || isSessionActionPending || !chatDraft.trim()}
+              className={`${sessionPrimaryButtonClassName} inline-flex items-center justify-center gap-1`}
+            >
+              <Send size={13} />
+              Send
+            </button>
+          </div>
+          <p className="mt-1 text-[10px] text-[#6a6a6a]">
+            Chat is rate-limited to prevent spam.
+          </p>
+        </div>
       ) : null}
       {isSessionEndPromptOpen ? (
         <div className="mt-3 rounded-md border border-[#d7b389] bg-[#fff7eb] p-2">

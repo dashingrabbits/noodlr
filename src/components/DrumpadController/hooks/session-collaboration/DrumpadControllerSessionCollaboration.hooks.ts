@@ -29,6 +29,7 @@ import {
 } from "./DrumpadControllerSessionCollaboration.utilities";
 import type {
   PendingSessionAction,
+  SessionChatMessage,
   SessionClientMessage,
   SessionConnectionStatus,
   SessionJoinRequest,
@@ -56,6 +57,7 @@ export const useSessionCollaboration = ({
   setImportedSampleAssets,
   setSampleMetadataOverrides,
 }: UseSessionCollaborationInput): UseSessionCollaborationResult => {
+  const MAX_LOCAL_CHAT_MESSAGES = 250;
   const [sessionConnectionStatus, setSessionConnectionStatus] =
     useState<SessionConnectionStatus>("disconnected");
   const [sessionError, setSessionError] = useState<string | null>(null);
@@ -63,6 +65,7 @@ export const useSessionCollaboration = ({
   const [isSessionHost, setIsSessionHost] = useState(false);
   const [isSessionEndPromptOpen, setIsSessionEndPromptOpen] = useState(false);
   const [sessionParticipants, setSessionParticipants] = useState<SessionParticipant[]>([]);
+  const [sessionChatMessages, setSessionChatMessages] = useState<SessionChatMessage[]>([]);
 
   const socketRef = useRef<WebSocket | null>(null);
   const pendingSessionActionRef = useRef<PendingSessionAction | null>(null);
@@ -108,6 +111,7 @@ export const useSessionCollaboration = ({
     setSessionId("");
     setIsSessionHost(false);
     setSessionParticipants([]);
+    setSessionChatMessages([]);
     uploadedSampleIdsRef.current.clear();
     resetSyncSchedulingState();
     lastSyncedStateHashRef.current = "";
@@ -144,6 +148,34 @@ export const useSessionCollaboration = ({
     socket.send(JSON.stringify(message));
     return true;
   }, []);
+
+  const annotateChatMessageForLocalClient = useCallback(
+    (chatMessage: SessionChatMessage) => {
+      return {
+        ...chatMessage,
+        isSelf: chatMessage.senderClientId === clientIdRef.current,
+      };
+    },
+    []
+  );
+
+  const appendSessionChatMessage = useCallback(
+    (chatMessage: SessionChatMessage) => {
+      setSessionChatMessages((previous) => {
+        if (previous.some((entry) => entry.id === chatMessage.id)) {
+          return previous;
+        }
+
+        const nextMessages = [...previous, annotateChatMessageForLocalClient(chatMessage)];
+        if (nextMessages.length <= MAX_LOCAL_CHAT_MESSAGES) {
+          return nextMessages;
+        }
+
+        return nextMessages.slice(nextMessages.length - MAX_LOCAL_CHAT_MESSAGES);
+      });
+    },
+    [annotateChatMessageForLocalClient]
+  );
 
   const mapSessionParticipants = useCallback(
     (participants?: SessionParticipantServerPayload[]): SessionParticipant[] => {
@@ -202,6 +234,7 @@ export const useSessionCollaboration = ({
     sessionSampleIdsRef.current.clear();
     setIsSessionEndPromptOpen(false);
     setSessionError(null);
+    setSessionChatMessages([]);
   }, [
     importedSampleObjectUrlsRef,
     setImportedSampleAssets,
@@ -598,6 +631,13 @@ export const useSessionCollaboration = ({
             uploadedSampleIdsRef.current = new Set(
               message.snapshot.samples.map((sample) => sample.id)
             );
+            setSessionChatMessages(
+              Array.isArray(message.chatHistory)
+                ? message.chatHistory
+                    .map((chatMessage) => annotateChatMessageForLocalClient(chatMessage))
+                    .slice(-MAX_LOCAL_CHAT_MESSAGES)
+                : []
+            );
             resolvePendingSessionAction("create");
             forceSyncQueuedRef.current = true;
             queueSessionSync();
@@ -627,6 +667,13 @@ export const useSessionCollaboration = ({
             );
             uploadedSampleIdsRef.current = new Set(
               message.snapshot.samples.map((sample) => sample.id)
+            );
+            setSessionChatMessages(
+              Array.isArray(message.chatHistory)
+                ? message.chatHistory
+                    .map((chatMessage) => annotateChatMessageForLocalClient(chatMessage))
+                    .slice(-MAX_LOCAL_CHAT_MESSAGES)
+                : []
             );
             applyIncomingSessionSnapshot(message.snapshot);
             resolvePendingSessionAction("join");
@@ -659,6 +706,11 @@ export const useSessionCollaboration = ({
             setSessionParticipants(nextParticipants);
             const selfParticipant = nextParticipants.find((participant) => participant.isSelf);
             setIsSessionHost(Boolean(selfParticipant?.isHost));
+            return;
+          }
+
+          if (message.type === "chat_message") {
+            appendSessionChatMessage(message.chatMessage);
             return;
           }
 
@@ -717,6 +769,8 @@ export const useSessionCollaboration = ({
 
     return socket;
   }, [
+    appendSessionChatMessage,
+    annotateChatMessageForLocalClient,
     applyIncomingSessionSnapshot,
     closeSocketConnection,
     debugSync,
@@ -823,6 +877,23 @@ export const useSessionCollaboration = ({
     [isSessionHost, sendSocketMessage, sessionId]
   );
 
+  const handleSendChatMessage = useCallback(
+    (message: string): boolean => {
+      const normalizedMessage = message.trim();
+      if (!normalizedMessage || !sessionId) {
+        return false;
+      }
+
+      return sendSocketMessage({
+        type: "send_chat_message",
+        clientId: clientIdRef.current,
+        sessionId,
+        message: normalizedMessage,
+      });
+    },
+    [sendSocketMessage, sessionId]
+  );
+
   const handleLeaveSession = useCallback(() => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN || !sessionId) {
@@ -895,10 +966,12 @@ export const useSessionCollaboration = ({
     handleKickSessionUser,
     handleLeaveSession,
     handleResolveSessionEndPrompt,
+    handleSendChatMessage,
     handleShareSession,
     isSessionEndPromptOpen,
     isSessionHost,
     queueSessionSync,
+    sessionChatMessages,
     sessionConnectionStatus,
     sessionError,
     sessionId,

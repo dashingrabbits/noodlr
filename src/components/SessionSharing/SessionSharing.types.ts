@@ -1,4 +1,5 @@
 import type {
+  SessionChatMessage,
   SessionConnectionStatus,
   SessionJoinRequest,
   SessionParticipant,
@@ -10,6 +11,7 @@ export interface SessionSharingProps {
   sessionId: string;
   isSessionHost: boolean;
   isSessionEndPromptOpen: boolean;
+  sessionChatMessages: SessionChatMessage[];
   sessionParticipants: SessionParticipant[];
   onClearSessionError: () => void;
   onCopySessionId: () => Promise<void>;
@@ -19,5 +21,6 @@ export interface SessionSharingProps {
   onKickSessionUser: (targetClientId: string) => void;
   onLeaveSession: () => void;
   onResolveSessionEndPrompt: () => void;
+  onSendChatMessage: (message: string) => boolean;
   onShareSession: () => Promise<void>;
 }

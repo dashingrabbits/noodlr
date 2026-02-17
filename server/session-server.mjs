@@ -17,6 +17,9 @@ const MAX_RELATIVE_PATH_LENGTH = 512;
 const MAX_MUSICAL_KEY_LENGTH = 16;
 const MAX_USERNAME_LENGTH = 32;
 const MAX_MESSAGES_PER_MINUTE = 240;
+const MAX_CHAT_MESSAGES_PER_MINUTE = 20;
+const MAX_CHAT_MESSAGE_LENGTH = 500;
+const MAX_CHAT_HISTORY_MESSAGES = 300;
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_PEERS_PER_SESSION = 12;
 const SOCKET_OPEN_STATE = 1;
@@ -99,6 +102,13 @@ const kickUserMessageSchema = z.object({
   targetClientId: clientIdSchema,
 });
 
+const sendChatMessageSchema = z.object({
+  type: z.literal("send_chat_message"),
+  clientId: clientIdSchema,
+  sessionId: sessionIdSchema,
+  message: z.string().trim().min(1).max(MAX_CHAT_MESSAGE_LENGTH),
+});
+
 const upsertStateMessageSchema = z.object({
   type: z.literal("upsert_state"),
   clientId: clientIdSchema,
@@ -133,6 +143,7 @@ const clientMessageSchema = z.union([
   leaveSessionMessageSchema,
   endSessionMessageSchema,
   kickUserMessageSchema,
+  sendChatMessageSchema,
   upsertStateMessageSchema,
 ]);
 
@@ -204,6 +215,10 @@ const serializeSessionSnapshot = (session) => ({
   sampleMetadataOverrides: session.sampleMetadataOverrides,
   samples: Array.from(session.samplesById.values()),
 });
+
+const serializeChatHistory = (session) => {
+  return [...session.chatMessages];
+};
 
 const serializeSessionParticipants = (session) => {
   return Array.from(session.participantNamesByClientId.entries())
@@ -358,6 +373,23 @@ const rateLimitSocket = (socket) => {
   return state.messageCount <= MAX_MESSAGES_PER_MINUTE;
 };
 
+const rateLimitChatMessages = (socket) => {
+  const state = clientStateBySocket.get(socket);
+  if (!state) {
+    return true;
+  }
+
+  const currentTime = now();
+  const elapsed = currentTime - state.chatMessageWindowStartedAt;
+  if (elapsed >= 60_000) {
+    state.chatMessageWindowStartedAt = currentTime;
+    state.chatMessageCount = 0;
+  }
+
+  state.chatMessageCount += 1;
+  return state.chatMessageCount <= MAX_CHAT_MESSAGES_PER_MINUTE;
+};
+
 const clearSessionData = (sessionId) => {
   const session = sessions.get(sessionId);
   if (!session) {
@@ -365,6 +397,7 @@ const clearSessionData = (sessionId) => {
   }
 
   session.samplesById.clear();
+  session.chatMessages.length = 0;
   session.participantNamesByClientId.clear();
   session.projectState = {};
   session.sampleMetadataOverrides = {};
@@ -447,6 +480,8 @@ app.get("/", { websocket: true }, (socket, request) => {
     sessionId: null,
     messageCount: 0,
     messageWindowStartedAt: now(),
+    chatMessageCount: 0,
+    chatMessageWindowStartedAt: now(),
   });
 
   socket.on("message", (rawPayload) => {
@@ -473,6 +508,7 @@ app.get("/", { websocket: true }, (socket, request) => {
           projectState: {},
           sampleMetadataOverrides: {},
           samplesById: new Map(),
+          chatMessages: [],
           participantNamesByClientId: new Map(),
           clients: new Set(),
         });
@@ -484,6 +520,7 @@ app.get("/", { websocket: true }, (socket, request) => {
           sessionId,
           revision: session.revision,
           snapshot: serializeSessionSnapshot(session),
+          chatHistory: serializeChatHistory(session),
           participants: serializeSessionParticipants(session),
         });
         return;
@@ -501,6 +538,7 @@ app.get("/", { websocket: true }, (socket, request) => {
           sessionId: session.id,
           revision: session.revision,
           snapshot: serializeSessionSnapshot(session),
+          chatHistory: serializeChatHistory(session),
           participants: serializeSessionParticipants(session),
         });
         broadcastSessionParticipants(session);
@@ -674,6 +712,53 @@ app.get("/", { websocket: true }, (socket, request) => {
           type: "session_sync_ack",
           sessionId: session.id,
           revision: session.revision,
+        });
+        return;
+      }
+
+      if (message.type === "send_chat_message") {
+        const clientState = clientStateBySocket.get(socket);
+        if (!clientState || clientState.sessionId !== message.sessionId) {
+          throw new Error("Socket is not joined to the requested session.");
+        }
+
+        if (!rateLimitChatMessages(socket)) {
+          throw new Error("Chat rate limit exceeded. Please slow down.");
+        }
+
+        const session = sessions.get(message.sessionId);
+        if (!session) {
+          throw new Error("Session not found.");
+        }
+
+        const senderClientId = clientState.clientId ?? message.clientId;
+        const senderUsername = session.participantNamesByClientId.get(senderClientId) || "User";
+        const chatMessage = {
+          id: randomBytes(12).toString("base64url"),
+          senderClientId,
+          senderUsername,
+          message: message.message.trim(),
+          createdAt: new Date().toISOString(),
+        };
+
+        session.chatMessages.push(chatMessage);
+        if (session.chatMessages.length > MAX_CHAT_HISTORY_MESSAGES) {
+          session.chatMessages.splice(0, session.chatMessages.length - MAX_CHAT_HISTORY_MESSAGES);
+        }
+        session.updatedAt = now();
+
+        for (const peer of session.clients) {
+          sendMessage(peer, {
+            type: "chat_message",
+            sessionId: session.id,
+            chatMessage,
+          });
+        }
+
+        debugLog("chat_message", {
+          sessionId: session.id,
+          senderClientId,
+          messageLength: chatMessage.message.length,
         });
       }
     } catch (error) {

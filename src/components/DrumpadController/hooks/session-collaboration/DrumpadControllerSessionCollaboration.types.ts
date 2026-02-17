@@ -29,6 +29,15 @@ export type SessionJoinRequest = {
   username: string;
 };
 
+export type SessionChatMessage = {
+  id: string;
+  senderClientId: string;
+  senderUsername: string;
+  message: string;
+  createdAt: string;
+  isSelf?: boolean;
+};
+
 export type SharedSessionSample = {
   id: string;
   name: string;
@@ -58,6 +67,7 @@ export type SessionCreateResponse = {
   sessionId: string;
   revision: number;
   snapshot: SessionSnapshotPayload;
+  chatHistory?: SessionChatMessage[];
   participants: SessionParticipantServerPayload[];
 };
 
@@ -66,6 +76,7 @@ export type SessionJoinResponse = {
   sessionId: string;
   revision: number;
   snapshot: SessionSnapshotPayload;
+  chatHistory?: SessionChatMessage[];
   participants: SessionParticipantServerPayload[];
 };
 
@@ -112,6 +123,12 @@ export type SessionEndedResponse = {
   reason: SessionEndedReason;
 };
 
+export type SessionChatMessageResponse = {
+  type: "chat_message";
+  sessionId: string;
+  chatMessage: SessionChatMessage;
+};
+
 export type SessionServerMessage =
   | SessionCreateResponse
   | SessionJoinResponse
@@ -121,6 +138,7 @@ export type SessionServerMessage =
   | SessionParticipantsResponse
   | SessionKickedResponse
   | SessionEndedResponse
+  | SessionChatMessageResponse
   | SessionErrorResponse;
 
 export type SessionCreateMessage = {
@@ -159,6 +177,13 @@ export type SessionKickUserMessage = {
   targetClientId: string;
 };
 
+export type SessionChatMessageSend = {
+  type: "send_chat_message";
+  clientId: string;
+  sessionId: string;
+  message: string;
+};
+
 export type SessionClientMessage =
   | SessionCreateMessage
   | SessionJoinMessage
@@ -169,6 +194,7 @@ export type SessionClientMessage =
       sessionId: string;
     }
   | SessionKickUserMessage
+  | SessionChatMessageSend
   | SessionUpsertStateMessage;
 
 export type PendingSessionAction = {
@@ -203,10 +229,12 @@ export type UseSessionCollaborationResult = {
   handleKickSessionUser: (targetClientId: string) => void;
   handleLeaveSession: () => void;
   handleResolveSessionEndPrompt: () => void;
+  handleSendChatMessage: (message: string) => boolean;
   handleShareSession: () => Promise<void>;
   isSessionEndPromptOpen: boolean;
   isSessionHost: boolean;
   queueSessionSync: () => void;
+  sessionChatMessages: SessionChatMessage[];
   sessionConnectionStatus: SessionConnectionStatus;
   sessionError: string | null;
   sessionId: string;
