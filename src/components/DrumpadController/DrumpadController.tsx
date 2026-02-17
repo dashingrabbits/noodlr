@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import JSZip from "jszip";
+import { Play, Square } from "lucide-react";
 import DrumpadHeader from "../DrumpadHeader/DrumpadHeader";
 import DrumpadGrid from "../DrumpadGrid/DrumpadGrid";
 import KitManager from "../KitManager/KitManager";
@@ -41,7 +42,11 @@ import type {
   PadStepSequence,
   PadSampleIds,
   PadVolumes,
+  SceneDefinition,
+  ScenePatternSelection,
+  SequencerPanelMode,
   SequencerPattern,
+  SongArrangementEntry,
 } from "./DrumpadController.types";
 import {
   clampPadPolyphony,
@@ -139,6 +144,7 @@ const DEMO_KIT_ARCHIVE_FILE_NAME = "Kit-2026-02-16T17-48-37.noodlr-kit.zip";
 const DEMO_KIT_AUTOLOAD_STORAGE_KEY = "noodlr.demoKitAutoLoaded.v1";
 const PAD_GROUP_IDS: PadGroupId[] = [1, 2, 3, 4];
 const DEFAULT_ACTIVE_PAD_GROUP_ID: PadGroupId = 1;
+const DEFAULT_SEQUENCER_PANEL_MODE: SequencerPanelMode = "sequencer";
 const EMPTY_STEP_OCTAVE_SEQUENCE = Array.from({ length: STEPS_IN_SEQUENCE }, () => 0);
 const RECORD_COUNT_IN_BEATS = 4;
 
@@ -151,6 +157,95 @@ type ActiveLoopVoice = {
   source: AudioBufferSourceNode;
   gainNode: GainNode;
   releaseSeconds: number;
+};
+
+const createDefaultScenePatternSelection = (
+  padGroupsState: PadGroupsState
+): ScenePatternSelection => {
+  return PAD_GROUP_IDS.reduce((selection, groupId) => {
+    void padGroupsState[groupId];
+    selection[groupId] = null;
+    return selection;
+  }, {} as ScenePatternSelection);
+};
+
+const createDefaultSceneDefinition = (
+  padGroupsState: PadGroupsState,
+  sceneNumber = 1
+): SceneDefinition => {
+  return {
+    id: createSavedKitId(),
+    name: `Scene ${sceneNumber}`,
+    selectedPatternIdsByGroup: createDefaultScenePatternSelection(padGroupsState),
+  };
+};
+
+const cloneScenePatternSelection = (
+  scenePatternSelection: ScenePatternSelection
+): ScenePatternSelection => {
+  return { ...scenePatternSelection };
+};
+
+const cloneSceneDefinition = (sceneDefinition: SceneDefinition): SceneDefinition => {
+  return {
+    ...sceneDefinition,
+    selectedPatternIdsByGroup: cloneScenePatternSelection(sceneDefinition.selectedPatternIdsByGroup),
+  };
+};
+
+const cloneSceneDefinitions = (sceneDefinitions: SceneDefinition[]): SceneDefinition[] => {
+  return sceneDefinitions.map((sceneDefinition) => cloneSceneDefinition(sceneDefinition));
+};
+
+const cloneSongArrangement = (songArrangement: SongArrangementEntry[]): SongArrangementEntry[] => {
+  return songArrangement.map((songEntry) => ({ ...songEntry }));
+};
+
+const isSequencerPanelMode = (value: unknown): value is SequencerPanelMode => {
+  return value === "sequencer" || value === "scenes" || value === "song";
+};
+
+const gcd = (left: number, right: number): number => {
+  let a = Math.abs(Math.round(left));
+  let b = Math.abs(Math.round(right));
+  while (b !== 0) {
+    const next = a % b;
+    a = b;
+    b = next;
+  }
+
+  return a || 1;
+};
+
+const lcm = (left: number, right: number): number => {
+  const normalizedLeft = Math.max(1, Math.round(Math.abs(left)));
+  const normalizedRight = Math.max(1, Math.round(Math.abs(right)));
+  return Math.max(1, (normalizedLeft * normalizedRight) / gcd(normalizedLeft, normalizedRight));
+};
+
+const areSceneDefinitionsEqual = (
+  leftScenes: SceneDefinition[],
+  rightScenes: SceneDefinition[]
+): boolean => {
+  if (leftScenes.length !== rightScenes.length) {
+    return false;
+  }
+
+  return leftScenes.every((leftScene, sceneIndex) => {
+    const rightScene = rightScenes[sceneIndex];
+    if (!rightScene) {
+      return false;
+    }
+
+    if (leftScene.id !== rightScene.id || leftScene.name !== rightScene.name) {
+      return false;
+    }
+
+    return PAD_GROUP_IDS.every(
+      (groupId) =>
+        leftScene.selectedPatternIdsByGroup[groupId] === rightScene.selectedPatternIdsByGroup[groupId]
+    );
+  });
 };
 
 const isSequencerStepLength = (value: unknown): value is SequencerStepLength => {
@@ -360,8 +455,15 @@ const DrumpadController = () => {
   const getInitialSampleRootDir = () => readPersistedSampleSoundsDir();
   const initialPadGroupsState = useMemo(() => createInitialPadGroupsState(), []);
   const initialActivePadGroupState = initialPadGroupsState[DEFAULT_ACTIVE_PAD_GROUP_ID];
+  const initialSceneDefinitions = useMemo(
+    () => [createDefaultSceneDefinition(initialPadGroupsState, 1)],
+    [initialPadGroupsState]
+  );
   const [isPlaying, setIsPlaying] = useState(false);
   const [masterVolume, setMasterVolume] = useState(DEFAULT_PAD_VOLUME);
+  const [sequencerPanelMode, setSequencerPanelMode] = useState<SequencerPanelMode>(
+    DEFAULT_SEQUENCER_PANEL_MODE
+  );
   const [activePadGroupId, setActivePadGroupId] = useState<PadGroupId>(
     DEFAULT_ACTIVE_PAD_GROUP_ID
   );
@@ -406,6 +508,19 @@ const DrumpadController = () => {
   const [activePatternId, setActivePatternId] = useState<string>(
     () => initialActivePadGroupState.activePatternId
   );
+  const [sceneDefinitions, setSceneDefinitions] = useState<SceneDefinition[]>(() =>
+    cloneSceneDefinitions(initialSceneDefinitions)
+  );
+  const [activeSceneId, setActiveSceneId] = useState<string>(() => initialSceneDefinitions[0].id);
+  const [songArrangement, setSongArrangement] = useState<SongArrangementEntry[]>([]);
+  const [songSceneDraftId, setSongSceneDraftId] = useState<string>(
+    () => initialSceneDefinitions[0].id
+  );
+  const [songModeStatusMessage, setSongModeStatusMessage] = useState("");
+  const [draggingSongEntryId, setDraggingSongEntryId] = useState<string | null>(null);
+  const [currentSongEntryIndex, setCurrentSongEntryIndex] = useState<number | null>(null);
+  const [currentSongEntryProgress, setCurrentSongEntryProgress] = useState<number | null>(null);
+  const [playbackSessionId, setPlaybackSessionId] = useState(0);
   const [padSampleIds, setPadSampleIds] = useState<PadSampleIds>(() => ({
     ...initialActivePadGroupState.padSampleIds,
   }));
@@ -545,9 +660,24 @@ const DrumpadController = () => {
   }, [padAssignedSamples, padNames, padRowMuted, padStepLength, padStepOctaves, padStepSequence]);
 
   const sequencerEngineStepLength = useMemo(() => {
-    const rowStepLengths = sequencerRows.map((row) => row.stepLength);
-    return getShortestStepLength([sequencerClockStepLength, ...rowStepLengths]);
-  }, [sequencerClockStepLength, sequencerRows]);
+    const stepLengths = new Set<SequencerStepLength>([sequencerClockStepLength]);
+
+    PAD_GROUP_IDS.forEach((groupId) => {
+      const patterns =
+        groupId === activePadGroupId
+          ? sequencerPatterns
+          : (padGroupsState[groupId]?.sequencerPatterns ?? []);
+      patterns.forEach((pattern) => {
+        Object.values(pattern.padStepLength).forEach((stepLength) => {
+          if (isSequencerStepLength(stepLength)) {
+            stepLengths.add(stepLength);
+          }
+        });
+      });
+    });
+
+    return getShortestStepLength(Array.from(stepLengths));
+  }, [activePadGroupId, padGroupsState, sequencerClockStepLength, sequencerPatterns]);
 
   const currentMainStep = useMemo(() => {
     const ticksPerMainStep = getStepLengthTickMultiplier(
@@ -556,6 +686,13 @@ const DrumpadController = () => {
     );
     return Math.floor(currentStep / ticksPerMainStep);
   }, [currentStep, sequencerClockStepLength, sequencerEngineStepLength]);
+
+  const basePatternLoopTicks = useMemo(() => {
+    return (
+      getStepLengthTickMultiplier(sequencerClockStepLength, sequencerEngineStepLength) *
+      STEPS_IN_SEQUENCE
+    );
+  }, [sequencerClockStepLength, sequencerEngineStepLength]);
 
   const patternOptions = useMemo(() => {
     return sequencerPatterns.map((pattern) => ({
@@ -574,6 +711,19 @@ const DrumpadController = () => {
   const selectedProject = useMemo(() => {
     return savedProjects.find((savedProject) => savedProject.id === selectedProjectId) ?? null;
   }, [savedProjects, selectedProjectId]);
+
+  const activeScene = useMemo(() => {
+    if (!sceneDefinitions.length) {
+      return null;
+    }
+
+    return sceneDefinitions.find((sceneDefinition) => sceneDefinition.id === activeSceneId)
+      ?? sceneDefinitions[0];
+  }, [activeSceneId, sceneDefinitions]);
+
+  const sceneDefinitionsById = useMemo(() => {
+    return new Map(sceneDefinitions.map((sceneDefinition) => [sceneDefinition.id, sceneDefinition]));
+  }, [sceneDefinitions]);
 
   const editingPad = useMemo(() => {
     if (editingPadId === null) {
@@ -647,6 +797,26 @@ const DrumpadController = () => {
     setPadStepLength(clonePadStepLength(fallbackPattern.padStepLength));
   }, [activePatternId, sequencerPatterns]);
 
+  useEffect(() => {
+    if (!sceneDefinitions.length) {
+      return;
+    }
+
+    if (!sceneDefinitions.some((sceneDefinition) => sceneDefinition.id === activeSceneId)) {
+      setActiveSceneId(sceneDefinitions[0].id);
+    }
+  }, [activeSceneId, sceneDefinitions]);
+
+  useEffect(() => {
+    if (!sceneDefinitions.length) {
+      return;
+    }
+
+    if (!sceneDefinitions.some((sceneDefinition) => sceneDefinition.id === songSceneDraftId)) {
+      setSongSceneDraftId(sceneDefinitions[0].id);
+    }
+  }, [sceneDefinitions, songSceneDraftId]);
+
   const buildDrumKitStateSnapshot = useCallback((): DrumKitState => {
     return {
       padVolumes: { ...padVolumes },
@@ -707,20 +877,131 @@ const DrumpadController = () => {
     sequencerPatterns,
   ]);
 
-  const buildProjectStateSnapshot = useCallback((): ProjectState => {
+  const livePadGroupsState = useMemo(() => {
     const currentPadGroupSnapshot = buildPadGroupStateSnapshot();
-    const nextPadGroups = PAD_GROUP_IDS.reduce((groupsState, groupId) => {
-      const sourceGroupState =
+    return PAD_GROUP_IDS.reduce((groupsState, groupId) => {
+      const sourceState =
         groupId === activePadGroupId
           ? currentPadGroupSnapshot
           : padGroupsState[groupId] ?? createDefaultPadGroupState();
-      groupsState[groupId] = clonePadGroupState(sourceGroupState);
+      groupsState[groupId] = clonePadGroupState(sourceState);
       return groupsState;
     }, {} as PadGroupsState);
+  }, [activePadGroupId, buildPadGroupStateSnapshot, padGroupsState]);
+
+  const getPatternLoopTicksForGroup = useCallback(
+    (groupState: PadGroupState, pattern: SequencerPattern): number => {
+      const rowLoopTicks = DRUM_PADS.map((pad) => {
+        const padId = pad.id;
+        const assignedSampleId = (groupState.padSampleIds[padId] ?? "").trim();
+        const rowSteps = pattern.padStepSequence[padId] ?? createEmptyStepSequence(STEPS_IN_SEQUENCE);
+        const hasActiveSteps = rowSteps.some((stepEnabled) => Boolean(stepEnabled));
+        if (!assignedSampleId || !hasActiveSteps) {
+          return null;
+        }
+
+        const rowStepLength = pattern.padStepLength[padId] ?? DEFAULT_ROW_STEP_LENGTH;
+        const rowStepTickMultiplier = getStepLengthTickMultiplier(
+          rowStepLength,
+          sequencerEngineStepLength
+        );
+        return rowStepTickMultiplier * STEPS_IN_SEQUENCE;
+      }).filter((ticks): ticks is number => typeof ticks === "number" && ticks > 0);
+
+      if (!rowLoopTicks.length) {
+        return basePatternLoopTicks;
+      }
+
+      return rowLoopTicks.reduce((accumulator, ticks) => lcm(accumulator, ticks), rowLoopTicks[0]);
+    },
+    [basePatternLoopTicks, sequencerEngineStepLength]
+  );
+
+  const sceneDurationTicksById = useMemo(() => {
+    const durationMap = new Map<string, number>();
+
+    sceneDefinitions.forEach((sceneDefinition) => {
+      const selectedPatternLoopTicks = PAD_GROUP_IDS.map((groupId) => {
+        const selectedPatternId = sceneDefinition.selectedPatternIdsByGroup[groupId];
+        if (!selectedPatternId) {
+          return null;
+        }
+
+        const groupState = livePadGroupsState[groupId];
+        const selectedPattern = groupState.sequencerPatterns.find(
+          (pattern) => pattern.id === selectedPatternId
+        );
+        if (!selectedPattern) {
+          return null;
+        }
+
+        return getPatternLoopTicksForGroup(groupState, selectedPattern);
+      }).filter((ticks): ticks is number => typeof ticks === "number" && ticks > 0);
+
+      const sceneLoopTicks = selectedPatternLoopTicks.length
+        ? selectedPatternLoopTicks.reduce(
+            (accumulator, ticks) => lcm(accumulator, ticks),
+            selectedPatternLoopTicks[0]
+          )
+        : basePatternLoopTicks;
+      durationMap.set(sceneDefinition.id, Math.max(1, sceneLoopTicks));
+    });
+
+    return durationMap;
+  }, [basePatternLoopTicks, getPatternLoopTicksForGroup, livePadGroupsState, sceneDefinitions]);
+
+  const activeSceneDurationTicks = useMemo(() => {
+    if (!activeScene) {
+      return basePatternLoopTicks;
+    }
+
+    return sceneDurationTicksById.get(activeScene.id) ?? basePatternLoopTicks;
+  }, [activeScene, basePatternLoopTicks, sceneDurationTicksById]);
+
+  const songArrangementTiming = useMemo(() => {
+    if (!songArrangement.length) {
+      return {
+        totalTicks: basePatternLoopTicks,
+        entryDurations: [] as Array<{
+          sceneId: string;
+          durationTicks: number;
+          startTick: number;
+          endTick: number;
+        }>,
+      };
+    }
+
+    let cursorTick = 0;
+    const entryDurations = songArrangement.map((songEntry) => {
+      const durationTicks =
+        sceneDurationTicksById.get(songEntry.sceneId) ?? activeSceneDurationTicks;
+      const nextDurationTicks = Math.max(1, durationTicks);
+      const entry = {
+        sceneId: songEntry.sceneId,
+        durationTicks: nextDurationTicks,
+        startTick: cursorTick,
+        endTick: cursorTick + nextDurationTicks,
+      };
+      cursorTick += nextDurationTicks;
+      return entry;
+    });
+
+    return {
+      totalTicks: Math.max(1, cursorTick),
+      entryDurations,
+    };
+  }, [activeSceneDurationTicks, basePatternLoopTicks, sceneDurationTicksById, songArrangement]);
+
+  const buildProjectStateSnapshot = useCallback((): ProjectState => {
+    const nextPadGroups = clonePadGroupsState(livePadGroupsState);
     const activePadGroupState = nextPadGroups[activePadGroupId];
 
     return {
       masterVolume,
+      sequencerPanelMode,
+      sceneDefinitions: cloneSceneDefinitions(sceneDefinitions),
+      activeSceneId,
+      songArrangement: cloneSongArrangement(songArrangement),
       activePadGroupId,
       padGroups: nextPadGroups,
       padVolumes: { ...activePadGroupState.padVolumes },
@@ -745,14 +1026,17 @@ const DrumpadController = () => {
       isMetronomeEnabled,
     };
   }, [
+    activeSceneId,
     activePadGroupId,
-    buildPadGroupStateSnapshot,
     isMetronomeEnabled,
+    livePadGroupsState,
     masterVolume,
     normalizePadSampleSettings,
-    padGroupsState,
+    sceneDefinitions,
     sequencerBpm,
     sequencerClockStepLength,
+    sequencerPanelMode,
+    songArrangement,
   ]);
 
   const normalizePadStepSequence = useCallback((candidate: PadStepSequence): PadStepSequence => {
@@ -941,6 +1225,119 @@ const DrumpadController = () => {
       normalizeSequencerPatterns,
     ]
   );
+
+  const normalizeSequencerPanelMode = useCallback(
+    (candidateMode: unknown): SequencerPanelMode => {
+      return isSequencerPanelMode(candidateMode)
+        ? candidateMode
+        : DEFAULT_SEQUENCER_PANEL_MODE;
+    },
+    []
+  );
+
+  const normalizeSceneDefinitions = useCallback(
+    (candidateScenes: unknown, sourcePadGroups: PadGroupsState): SceneDefinition[] => {
+      const candidateSceneArray = Array.isArray(candidateScenes) ? candidateScenes : [];
+
+      const nextScenes = candidateSceneArray
+        .map((candidateScene, index) => {
+          if (!candidateScene || typeof candidateScene !== "object") {
+            return null;
+          }
+
+          const sceneRecord = candidateScene as Record<string, unknown>;
+          const sceneName =
+            typeof sceneRecord.name === "string" && sceneRecord.name.trim()
+              ? sceneRecord.name.trim()
+              : `Scene ${index + 1}`;
+          const sceneId =
+            typeof sceneRecord.id === "string" && sceneRecord.id.trim()
+              ? sceneRecord.id.trim()
+              : createSavedKitId();
+
+          const candidateSelection =
+            sceneRecord.selectedPatternIdsByGroup &&
+            typeof sceneRecord.selectedPatternIdsByGroup === "object"
+              ? (sceneRecord.selectedPatternIdsByGroup as Partial<ScenePatternSelection>)
+              : ({} as Partial<ScenePatternSelection>);
+
+          const selectedPatternIdsByGroup = PAD_GROUP_IDS.reduce((selection, groupId) => {
+            const groupState = sourcePadGroups[groupId];
+            const candidatePatternId = candidateSelection[groupId];
+            const hasCandidatePattern =
+              typeof candidatePatternId === "string" &&
+              groupState.sequencerPatterns.some((pattern) => pattern.id === candidatePatternId);
+
+            selection[groupId] = hasCandidatePattern ? candidatePatternId : null;
+            return selection;
+          }, {} as ScenePatternSelection);
+
+          return {
+            id: sceneId,
+            name: sceneName,
+            selectedPatternIdsByGroup,
+          } satisfies SceneDefinition;
+        })
+        .filter((sceneDefinition): sceneDefinition is SceneDefinition => Boolean(sceneDefinition));
+
+      if (nextScenes.length > 0) {
+        return nextScenes;
+      }
+
+      return [createDefaultSceneDefinition(sourcePadGroups, 1)];
+    },
+    []
+  );
+
+  const normalizeSongArrangement = useCallback(
+    (
+      candidateSongArrangement: unknown,
+      availableScenes: SceneDefinition[]
+    ): SongArrangementEntry[] => {
+      if (!Array.isArray(candidateSongArrangement) || !availableScenes.length) {
+        return [];
+      }
+
+      const availableSceneIds = new Set(availableScenes.map((sceneDefinition) => sceneDefinition.id));
+
+      return candidateSongArrangement
+        .map((candidateSongEntry) => {
+          if (!candidateSongEntry || typeof candidateSongEntry !== "object") {
+            return null;
+          }
+
+          const entryRecord = candidateSongEntry as Record<string, unknown>;
+          const sceneId =
+            typeof entryRecord.sceneId === "string" && entryRecord.sceneId.trim()
+              ? entryRecord.sceneId.trim()
+              : "";
+          if (!availableSceneIds.has(sceneId)) {
+            return null;
+          }
+
+          const songEntryId =
+            typeof entryRecord.id === "string" && entryRecord.id.trim()
+              ? entryRecord.id.trim()
+              : createSavedKitId();
+
+          return {
+            id: songEntryId,
+            sceneId,
+          } satisfies SongArrangementEntry;
+        })
+        .filter((songEntry): songEntry is SongArrangementEntry => Boolean(songEntry));
+    },
+    []
+  );
+
+  useEffect(() => {
+    setSceneDefinitions((previousScenes) => {
+      const normalizedScenes = normalizeSceneDefinitions(previousScenes, livePadGroupsState);
+      return areSceneDefinitionsEqual(previousScenes, normalizedScenes)
+        ? previousScenes
+        : normalizedScenes;
+    });
+  }, [livePadGroupsState, normalizeSceneDefinitions]);
 
   const getAudioContext = useCallback((): AudioContext | null => {
     if (typeof window === "undefined") {
@@ -1655,6 +2052,120 @@ const DrumpadController = () => {
 
   playAssignedSampleRef.current = playAssignedSample;
 
+  const playSceneAssignedSample = useCallback(
+    (
+      groupId: PadGroupId,
+      groupState: PadGroupState,
+      padId: number,
+      scheduledTime?: number,
+      transposeSemitoneOffset = 0
+    ) => {
+      const assignedSampleId = (groupState.padSampleIds[padId] ?? "").trim();
+      const syntheticPadId = groupId * 100 + padId;
+      if (!assignedSampleId) {
+        stopLoopBufferSourceForPad(syntheticPadId);
+        return;
+      }
+
+      const assignedSample = sampleAssetsById.get(assignedSampleId);
+      if (!assignedSample) {
+        stopLoopBufferSourceForPad(syntheticPadId);
+        return;
+      }
+
+      const padVolume = groupState.padVolumes[padId] ?? DEFAULT_PAD_VOLUME;
+      const outputGain = Math.max(0, Math.min(1, (masterVolume / 100) * (padVolume / 100)));
+      const sampleSettings = groupState.padSampleSettings[padId] ?? DEFAULT_PAD_SAMPLE_SETTINGS;
+      const context = getAudioContext();
+      if (!context) {
+        return;
+      }
+
+      const cachedBuffer = sampleBufferCacheRef.current.get(assignedSample.id);
+      const isLoopEnabled = groupState.padLoopEnabled[padId] ?? false;
+
+      if (isLoopEnabled) {
+        if (context.state === "running" && cachedBuffer) {
+          playLoopBufferSource(
+            context,
+            cachedBuffer,
+            syntheticPadId,
+            sampleSettings,
+            outputGain,
+            scheduledTime,
+            transposeSemitoneOffset
+          );
+          return;
+        }
+
+        if (context.state !== "running") {
+          resumeAudioContextIfNeeded(context);
+        }
+
+        void ensureSampleBuffer(assignedSample)
+          .then((sampleBuffer) => {
+            if (!sampleBuffer) {
+              return;
+            }
+
+            const activeContext = getAudioContext();
+            if (!activeContext || activeContext.state !== "running") {
+              return;
+            }
+
+            playLoopBufferSource(
+              activeContext,
+              sampleBuffer,
+              syntheticPadId,
+              sampleSettings,
+              outputGain,
+              scheduledTime,
+              transposeSemitoneOffset
+            );
+          })
+          .catch(() => {
+            // Ignore warmup errors.
+          });
+        return;
+      }
+
+      stopLoopBufferSourceForPad(syntheticPadId);
+
+      const maxVoices = groupState.padPolyphony[padId] ?? DEFAULT_SAMPLE_POLYPHONY;
+      if (context.state === "running" && cachedBuffer) {
+        playBufferSource(
+          context,
+          cachedBuffer,
+          syntheticPadId,
+          maxVoices,
+          sampleSettings,
+          outputGain,
+          scheduledTime,
+          transposeSemitoneOffset
+        );
+        return;
+      }
+
+      if (context.state !== "running") {
+        resumeAudioContextIfNeeded(context);
+      }
+
+      void ensureSampleBuffer(assignedSample).catch(() => {
+        // Ignore warmup errors.
+      });
+    },
+    [
+      ensureSampleBuffer,
+      getAudioContext,
+      masterVolume,
+      playBufferSource,
+      playLoopBufferSource,
+      resumeAudioContextIfNeeded,
+      sampleAssetsById,
+      stopLoopBufferSourceForPad,
+    ]
+  );
+
   const clearScheduledTickVisualTimeouts = useCallback(() => {
     scheduledTickVisualTimeoutsRef.current.forEach((timeoutId) => {
       window.clearTimeout(timeoutId);
@@ -1770,19 +2281,38 @@ const DrumpadController = () => {
     [flashPadVisual, playAssignedSample]
   );
 
-  const handleTogglePlayback = useCallback(() => {
+  const stopTransportPlayback = useCallback(() => {
     if (isCountInActiveRef.current) {
       cancelCountIn();
+    }
+
+    setIsPlaying(false);
+    stopAllLoopBufferSources();
+    stopAllOneShotBufferSources();
+    stopAllMetronomeSources();
+    stopPreviewBufferSource();
+    clearScheduledTickVisualTimeouts();
+    currentTickRef.current = 0;
+    setCurrentStep(0);
+    setCurrentSongEntryIndex(null);
+    setCurrentSongEntryProgress(null);
+  }, [
+    cancelCountIn,
+    clearScheduledTickVisualTimeouts,
+    stopAllLoopBufferSources,
+    stopAllMetronomeSources,
+    stopAllOneShotBufferSources,
+    stopPreviewBufferSource,
+  ]);
+
+  const handleTogglePlayback = useCallback(() => {
+    if (isCountInActiveRef.current) {
+      stopTransportPlayback();
       return;
     }
 
     if (isPlayingRef.current) {
-      setIsPlaying(false);
-      stopAllLoopBufferSources();
-      stopAllOneShotBufferSources();
-      stopAllMetronomeSources();
-      stopPreviewBufferSource();
-      clearScheduledTickVisualTimeouts();
+      stopTransportPlayback();
       return;
     }
 
@@ -1795,13 +2325,8 @@ const DrumpadController = () => {
     setCurrentStep(0);
     setIsPlaying(true);
   }, [
-    cancelCountIn,
-    clearScheduledTickVisualTimeouts,
     startRecordCountIn,
-    stopAllMetronomeSources,
-    stopAllLoopBufferSources,
-    stopAllOneShotBufferSources,
-    stopPreviewBufferSource,
+    stopTransportPlayback,
   ]);
 
   const handleAddSequencerPattern = useCallback(() => {
@@ -1996,6 +2521,206 @@ const DrumpadController = () => {
     ]
   );
 
+  const restartTransportFromStart = useCallback(() => {
+    cancelCountIn();
+    stopAllLoopBufferSources();
+    stopAllOneShotBufferSources();
+    stopAllMetronomeSources();
+    stopPreviewBufferSource();
+    clearScheduledTickVisualTimeouts();
+    currentTickRef.current = 0;
+    setCurrentStep(0);
+    setCurrentSongEntryIndex(null);
+    setPlaybackSessionId((previous) => previous + 1);
+  }, [
+    cancelCountIn,
+    clearScheduledTickVisualTimeouts,
+    stopAllLoopBufferSources,
+    stopAllMetronomeSources,
+    stopAllOneShotBufferSources,
+    stopPreviewBufferSource,
+  ]);
+
+  const handleSelectSceneDefinition = useCallback(
+    (sceneId: string) => {
+      if (sceneId === activeSceneId) {
+        return;
+      }
+
+      setActiveSceneId(sceneId);
+      if (isPlayingRef.current && sequencerPanelMode === "scenes") {
+        restartTransportFromStart();
+      }
+    },
+    [activeSceneId, restartTransportFromStart, sequencerPanelMode]
+  );
+
+  const handleScenePlayStopToggle = useCallback(
+    (sceneId: string) => {
+      const isTargetSceneActive = activeSceneId === sceneId;
+      const isTargetScenePlaying =
+        isPlayingRef.current && sequencerPanelMode === "scenes" && isTargetSceneActive;
+
+      if (isTargetScenePlaying) {
+        handleTogglePlayback();
+        return;
+      }
+
+      if (sequencerPanelMode !== "scenes") {
+        setSequencerPanelMode("scenes");
+      }
+      if (!isTargetSceneActive) {
+        setActiveSceneId(sceneId);
+      }
+
+      if (isPlayingRef.current) {
+        restartTransportFromStart();
+        return;
+      }
+
+      if (isCountInActiveRef.current) {
+        cancelCountIn();
+      }
+      currentTickRef.current = 0;
+      setCurrentStep(0);
+      setCurrentSongEntryIndex(null);
+      setIsPlaying(true);
+    },
+    [
+      activeSceneId,
+      cancelCountIn,
+      handleTogglePlayback,
+      restartTransportFromStart,
+      sequencerPanelMode,
+    ]
+  );
+
+  const handleSelectSequencerPanelMode = useCallback(
+    (nextMode: SequencerPanelMode) => {
+      if (nextMode === sequencerPanelMode) {
+        return;
+      }
+
+      if (isPlayingRef.current || isCountInActiveRef.current) {
+        stopTransportPlayback();
+      }
+
+      setSequencerPanelMode(nextMode);
+    },
+    [sequencerPanelMode, stopTransportPlayback]
+  );
+
+  const handleAddScene = useCallback(() => {
+    setSceneDefinitions((previousScenes) => {
+      const nextScene = createDefaultSceneDefinition(
+        livePadGroupsState,
+        previousScenes.length + 1
+      );
+      setActiveSceneId(nextScene.id);
+      setSongSceneDraftId(nextScene.id);
+      return [...previousScenes, nextScene];
+    });
+  }, [livePadGroupsState]);
+
+  const handleDeleteActiveScene = useCallback(() => {
+    if (!activeScene || sceneDefinitions.length <= 1) {
+      return;
+    }
+
+    const deletedSceneId = activeScene.id;
+    const nextScenes = sceneDefinitions.filter((sceneDefinition) => sceneDefinition.id !== deletedSceneId);
+    const nextActiveScene = nextScenes[0];
+    if (!nextActiveScene) {
+      return;
+    }
+
+    setSceneDefinitions(nextScenes);
+    setActiveSceneId(nextActiveScene.id);
+    setSongSceneDraftId((previous) => (previous === deletedSceneId ? nextActiveScene.id : previous));
+    setSongArrangement((previousSongArrangement) =>
+      previousSongArrangement.filter((songEntry) => songEntry.sceneId !== deletedSceneId)
+    );
+  }, [activeScene, sceneDefinitions]);
+
+  const handleSelectScenePattern = useCallback(
+    (groupId: PadGroupId, patternId: string) => {
+      setSceneDefinitions((previousScenes) =>
+        previousScenes.map((sceneDefinition) => {
+          if (!activeScene || sceneDefinition.id !== activeScene.id) {
+            return sceneDefinition;
+          }
+
+          if (sceneDefinition.selectedPatternIdsByGroup[groupId] === patternId) {
+            return {
+              ...sceneDefinition,
+              selectedPatternIdsByGroup: {
+                ...sceneDefinition.selectedPatternIdsByGroup,
+                [groupId]: null,
+              },
+            };
+          }
+
+          return {
+            ...sceneDefinition,
+            selectedPatternIdsByGroup: {
+              ...sceneDefinition.selectedPatternIdsByGroup,
+              [groupId]: patternId,
+            },
+          };
+        })
+      );
+    },
+    [activeScene]
+  );
+
+  const handleAddSceneToSong = useCallback(
+    (sceneId: string) => {
+      if (!sceneDefinitionsById.has(sceneId)) {
+        return;
+      }
+
+      setSongArrangement((previousSongArrangement) => [
+        ...previousSongArrangement,
+        {
+          id: createSavedKitId(),
+          sceneId,
+        },
+      ]);
+      const sceneName = sceneDefinitionsById.get(sceneId)?.name ?? "Scene";
+      setSongModeStatusMessage(`${sceneName} added to song.`);
+    },
+    [sceneDefinitionsById]
+  );
+
+  const handleDeleteSongEntry = useCallback((songEntryId: string) => {
+    setSongArrangement((previousSongArrangement) =>
+      previousSongArrangement.filter((songEntry) => songEntry.id !== songEntryId)
+    );
+  }, []);
+
+  const handleMoveSongEntry = useCallback((draggedSongEntryId: string, targetSongEntryId: string) => {
+    if (draggedSongEntryId === targetSongEntryId) {
+      return;
+    }
+
+    setSongArrangement((previousSongArrangement) => {
+      const draggedIndex = previousSongArrangement.findIndex(
+        (songEntry) => songEntry.id === draggedSongEntryId
+      );
+      const targetIndex = previousSongArrangement.findIndex(
+        (songEntry) => songEntry.id === targetSongEntryId
+      );
+      if (draggedIndex < 0 || targetIndex < 0) {
+        return previousSongArrangement;
+      }
+
+      const nextSongArrangement = [...previousSongArrangement];
+      const [draggedSongEntry] = nextSongArrangement.splice(draggedIndex, 1);
+      nextSongArrangement.splice(targetIndex, 0, draggedSongEntry);
+      return nextSongArrangement;
+    });
+  }, []);
+
   const handleSequencerStepToggle = useCallback((padId: number, stepIndex: number) => {
     if (stepIndex < 0 || stepIndex >= STEPS_IN_SEQUENCE) {
       return;
@@ -2187,6 +2912,8 @@ const DrumpadController = () => {
   useEffect(() => {
     if (!isPlaying) {
       clearScheduledTickVisualTimeouts();
+      setCurrentSongEntryIndex(null);
+      setCurrentSongEntryProgress(null);
       return;
     }
 
@@ -2210,6 +2937,52 @@ const DrumpadController = () => {
       (getSequencerStepDurationMs(sequencerBpm, sequencerEngineStepLength) / 1000) *
       clockRateMultiplier;
 
+    const resolveScenePlaybackContext = (tick: number) => {
+      if (sequencerPanelMode === "sequencer") {
+        return {
+          sceneDefinition: null as SceneDefinition | null,
+          songEntryIndex: null as number | null,
+          sceneTick: tick,
+          sceneDurationTicks: basePatternLoopTicks,
+        };
+      }
+
+      if (!activeScene) {
+        return {
+          sceneDefinition: null as SceneDefinition | null,
+          songEntryIndex: null as number | null,
+          sceneTick: tick,
+          sceneDurationTicks: basePatternLoopTicks,
+        };
+      }
+
+      if (sequencerPanelMode === "song" && songArrangementTiming.entryDurations.length > 0) {
+        const safeSongTick = tick % Math.max(1, songArrangementTiming.totalTicks);
+        const songEntryIndex = songArrangementTiming.entryDurations.findIndex(
+          (songEntryTiming) =>
+            safeSongTick >= songEntryTiming.startTick && safeSongTick < songEntryTiming.endTick
+        );
+        const fallbackSongEntryTiming = songArrangementTiming.entryDurations[0];
+        const targetSongEntryTiming =
+          songArrangementTiming.entryDurations[songEntryIndex] ?? fallbackSongEntryTiming;
+        const targetSongEntryIndex = songEntryIndex >= 0 ? songEntryIndex : 0;
+        const songScene = sceneDefinitionsById.get(targetSongEntryTiming.sceneId) ?? activeScene;
+        return {
+          sceneDefinition: songScene,
+          songEntryIndex: targetSongEntryIndex,
+          sceneTick: safeSongTick - targetSongEntryTiming.startTick,
+          sceneDurationTicks: targetSongEntryTiming.durationTicks,
+        };
+      }
+
+      return {
+        sceneDefinition: activeScene,
+        songEntryIndex: null as number | null,
+        sceneTick: tick % Math.max(1, activeSceneDurationTicks),
+        sceneDurationTicks: Math.max(1, activeSceneDurationTicks),
+      };
+    };
+
     const scheduleTickPlayback = (tick: number, tickTimeSeconds: number) => {
       if (isMetronomeEnabled && tick % metronomeTicksPerBeat === 0) {
         const isAccentTick = tick % metronomeTicksPerBar === 0;
@@ -2222,37 +2995,94 @@ const DrumpadController = () => {
       }
 
       const triggeredPadIds: number[] = [];
-      Object.entries(padStepSequenceRef.current).forEach(([padIdRaw, steps]) => {
-        const padId = Number(padIdRaw);
-        if (padRowMutedRef.current[padId]) {
-          return;
-        }
-        const rowStepLength = padStepLengthRef.current[padId] ?? DEFAULT_ROW_STEP_LENGTH;
-        const rowStepTickMultiplier = getStepLengthTickMultiplier(
-          rowStepLength,
-          sequencerEngineStepLength
-        );
-        if (tick % rowStepTickMultiplier !== 0) {
-          return;
-        }
+      const playbackContext = resolveScenePlaybackContext(tick);
+      if (sequencerPanelMode === "sequencer" || !playbackContext.sceneDefinition) {
+        Object.entries(padStepSequenceRef.current).forEach(([padIdRaw, steps]) => {
+          const padId = Number(padIdRaw);
+          if (padRowMutedRef.current[padId]) {
+            return;
+          }
+          const rowStepLength = padStepLengthRef.current[padId] ?? DEFAULT_ROW_STEP_LENGTH;
+          const rowStepTickMultiplier = getStepLengthTickMultiplier(
+            rowStepLength,
+            sequencerEngineStepLength
+          );
+          if (tick % rowStepTickMultiplier !== 0) {
+            return;
+          }
 
-        const rowStepIndex = Math.floor(tick / rowStepTickMultiplier) % STEPS_IN_SEQUENCE;
-        if (!steps[rowStepIndex]) {
-          return;
-        }
-        const rowStepOctaves = padStepOctavesRef.current[padId] ?? EMPTY_STEP_OCTAVE_SEQUENCE;
-        const transposeSemitoneOffset = getNormalizedStepOctaveSemitoneOffset(
-          rowStepOctaves[rowStepIndex]
-        );
+          const rowStepIndex = Math.floor(tick / rowStepTickMultiplier) % STEPS_IN_SEQUENCE;
+          if (!steps[rowStepIndex]) {
+            return;
+          }
+          const rowStepOctaves = padStepOctavesRef.current[padId] ?? EMPTY_STEP_OCTAVE_SEQUENCE;
+          const transposeSemitoneOffset = getNormalizedStepOctaveSemitoneOffset(
+            rowStepOctaves[rowStepIndex]
+          );
 
-        const assignedSampleId = padSampleIdsRef.current[padId] ?? "";
-        if (!assignedSampleId) {
-          return;
-        }
+          const assignedSampleId = padSampleIdsRef.current[padId] ?? "";
+          if (!assignedSampleId) {
+            return;
+          }
 
-        playAssignedSampleRef.current(padId, tickTimeSeconds, transposeSemitoneOffset);
-        triggeredPadIds.push(padId);
-      });
+          playAssignedSampleRef.current(padId, tickTimeSeconds, transposeSemitoneOffset);
+          triggeredPadIds.push(padId);
+        });
+      } else {
+        PAD_GROUP_IDS.forEach((groupId) => {
+          const groupState = livePadGroupsState[groupId];
+          const selectedPatternId = playbackContext.sceneDefinition?.selectedPatternIdsByGroup[groupId];
+          if (!selectedPatternId) {
+            return;
+          }
+          const selectedPattern = groupState.sequencerPatterns.find(
+            (pattern) => pattern.id === selectedPatternId
+          );
+          if (!selectedPattern) {
+            return;
+          }
+
+          DRUM_PADS.forEach((pad) => {
+            const padId = pad.id;
+            if (groupState.padRowMuted[padId]) {
+              return;
+            }
+
+            const rowStepLength = selectedPattern.padStepLength[padId] ?? DEFAULT_ROW_STEP_LENGTH;
+            const rowStepTickMultiplier = getStepLengthTickMultiplier(
+              rowStepLength,
+              sequencerEngineStepLength
+            );
+            if (playbackContext.sceneTick % rowStepTickMultiplier !== 0) {
+              return;
+            }
+
+            const rowStepIndex =
+              Math.floor(playbackContext.sceneTick / rowStepTickMultiplier) % STEPS_IN_SEQUENCE;
+            const rowSteps =
+              selectedPattern.padStepSequence[padId] ?? createEmptyStepSequence(STEPS_IN_SEQUENCE);
+            if (!rowSteps[rowStepIndex]) {
+              return;
+            }
+
+            const rowStepOctaves =
+              selectedPattern.padStepOctaves[padId] ?? EMPTY_STEP_OCTAVE_SEQUENCE;
+            const transposeSemitoneOffset = getNormalizedStepOctaveSemitoneOffset(
+              rowStepOctaves[rowStepIndex]
+            );
+            playSceneAssignedSample(
+              groupId,
+              groupState,
+              padId,
+              tickTimeSeconds,
+              transposeSemitoneOffset
+            );
+            if (groupId === activePadGroupId) {
+              triggeredPadIds.push(padId);
+            }
+          });
+        });
+      }
 
       const visualDelayMs = Math.max(0, (tickTimeSeconds - context.currentTime) * 1000);
       const timeoutId = window.setTimeout(() => {
@@ -2263,8 +3093,21 @@ const DrumpadController = () => {
         triggeredPadIds.forEach((padId) => {
           flashPadVisual(padId);
         });
-        currentTickRef.current = tick;
-        setCurrentStep(tick);
+        const visualTick =
+          sequencerPanelMode === "sequencer" ? tick : playbackContext.sceneTick;
+        currentTickRef.current = visualTick;
+        setCurrentStep(visualTick);
+        setCurrentSongEntryIndex(playbackContext.songEntryIndex);
+        if (sequencerPanelMode === "song" && playbackContext.songEntryIndex !== null) {
+          setCurrentSongEntryProgress(
+            Math.max(
+              0,
+              Math.min(1, playbackContext.sceneTick / Math.max(1, playbackContext.sceneDurationTicks))
+            )
+          );
+        } else {
+          setCurrentSongEntryProgress(null);
+        }
       }, visualDelayMs);
 
       scheduledTickVisualTimeoutsRef.current.push(timeoutId);
@@ -2293,6 +3136,8 @@ const DrumpadController = () => {
       clearScheduledTickVisualTimeouts();
       currentTickRef.current = 0;
       setCurrentStep(0);
+      setCurrentSongEntryIndex(null);
+      setCurrentSongEntryProgress(null);
       nextTick = 0;
       nextTickTimeSeconds = context.currentTime + 0.02;
       runScheduler();
@@ -2321,16 +3166,26 @@ const DrumpadController = () => {
       clearScheduledTickVisualTimeouts();
     };
   }, [
+    activePadGroupId,
+    activeScene,
     clearScheduledTickVisualTimeouts,
     flashPadVisual,
     getAudioContext,
     isPlaying,
     isMetronomeEnabled,
+    livePadGroupsState,
     masterVolume,
+    basePatternLoopTicks,
+    playbackSessionId,
+    playSceneAssignedSample,
     scheduleMetronomeTone,
+    songArrangementTiming,
+    sceneDefinitionsById,
+    activeSceneDurationTicks,
     sequencerBpm,
     sequencerClockStepLength,
     sequencerEngineStepLength,
+    sequencerPanelMode,
     stopAllMetronomeSources,
   ]);
 
@@ -2381,6 +3236,7 @@ const DrumpadController = () => {
   const handleClearSequence = () => {
     const defaultPadGroups = createInitialPadGroupsState();
     const defaultActiveGroup = defaultPadGroups[DEFAULT_ACTIVE_PAD_GROUP_ID];
+    const defaultScene = createDefaultSceneDefinition(defaultPadGroups, 1);
 
     cancelCountIn();
     stopAllLoopBufferSources();
@@ -2414,6 +3270,13 @@ const DrumpadController = () => {
     setPadStepSequence(clonePadStepSequence(defaultActiveGroup.padStepSequence));
     setPadStepOctaves(clonePadStepOctaves(defaultActiveGroup.padStepOctaves));
     setPadStepLength(clonePadStepLength(defaultActiveGroup.padStepLength));
+    setSequencerPanelMode(DEFAULT_SEQUENCER_PANEL_MODE);
+    setSceneDefinitions([defaultScene]);
+    setActiveSceneId(defaultScene.id);
+    setSongArrangement([]);
+    setSongSceneDraftId(defaultScene.id);
+    setCurrentSongEntryIndex(null);
+    setCurrentSongEntryProgress(null);
     setSequencerBpm(DEFAULT_SEQUENCER_BPM);
     setSequencerClockStepLength(BASE_SEQUENCER_STEP_LENGTH);
     setSelectedProjectId("");
@@ -2650,21 +3513,6 @@ const DrumpadController = () => {
       };
 
       const remappedPadSampleIds = remapPadSampleIds(manifest.state.padSampleIds);
-      const remappedPadGroups = manifest.state.padGroups
-        ? PAD_GROUP_IDS.reduce((groupsState, groupId) => {
-            const sourceGroup = manifest.state.padGroups?.[groupId];
-            if (!sourceGroup) {
-              groupsState[groupId] = createDefaultPadGroupState();
-              return groupsState;
-            }
-
-            groupsState[groupId] = {
-              ...sourceGroup,
-              padSampleIds: remapPadSampleIds(sourceGroup.padSampleIds),
-            };
-            return groupsState;
-          }, {} as PadGroupsState)
-        : undefined;
 
       const remappedMetadataOverrides = Object.fromEntries(
         Object.entries(manifest.sampleMetadataOverrides).flatMap(([oldSampleId, override]) => {
@@ -2822,6 +3670,24 @@ const DrumpadController = () => {
         nextPadGroups[requestedActivePadGroupId] ??
         nextPadGroups[DEFAULT_ACTIVE_PAD_GROUP_ID] ??
         createDefaultPadGroupState();
+      const nextSceneDefinitions = normalizeSceneDefinitions(
+        candidateProjectState.sceneDefinitions,
+        nextPadGroups
+      );
+      const nextActiveSceneId =
+        typeof candidateProjectState.activeSceneId === "string" &&
+        nextSceneDefinitions.some(
+          (sceneDefinition) => sceneDefinition.id === candidateProjectState.activeSceneId
+        )
+          ? candidateProjectState.activeSceneId
+          : nextSceneDefinitions[0].id;
+      const nextSongArrangement = normalizeSongArrangement(
+        candidateProjectState.songArrangement,
+        nextSceneDefinitions
+      );
+      const nextSequencerPanelMode = normalizeSequencerPanelMode(
+        candidateProjectState.sequencerPanelMode
+      );
 
       cancelCountIn();
       stopAllLoopBufferSources();
@@ -2839,9 +3705,16 @@ const DrumpadController = () => {
       setMasterVolume(
         Math.max(0, Math.min(100, Number(candidateProjectState.masterVolume ?? DEFAULT_PAD_VOLUME)))
       );
+      setSequencerPanelMode(nextSequencerPanelMode);
       setPadGroupsState(nextPadGroups);
       setActivePadGroupId(requestedActivePadGroupId);
       applyPadGroupState(nextActivePadGroup);
+      setSceneDefinitions(nextSceneDefinitions);
+      setActiveSceneId(nextActiveSceneId);
+      setSongArrangement(nextSongArrangement);
+      setSongSceneDraftId(nextActiveSceneId);
+      setCurrentSongEntryIndex(null);
+      setCurrentSongEntryProgress(null);
       setSequencerBpm(
         clampSequencerBpm(Number(candidateProjectState.sequencerBpm ?? DEFAULT_SEQUENCER_BPM))
       );
@@ -2856,6 +3729,9 @@ const DrumpadController = () => {
       applyPadGroupState,
       cancelCountIn,
       normalizePadGroupState,
+      normalizeSceneDefinitions,
+      normalizeSequencerPanelMode,
+      normalizeSongArrangement,
       stopAllMetronomeSources,
       stopAllLoopBufferSources,
       stopAllOneShotBufferSources,
@@ -3012,12 +3888,31 @@ const DrumpadController = () => {
         return Array.from(existingById.values());
       });
 
-      const remappedPadSampleIds = Object.fromEntries(
-        Object.entries(manifest.state.padSampleIds ?? {}).map(([padIdRaw, oldSampleId]) => {
-          const importedSampleId = importedSampleIdMap.get(String(oldSampleId));
-          return [Number(padIdRaw), importedSampleId || ""];
-        })
-      ) as PadSampleIds;
+      const remapPadSampleIds = (candidatePadSampleIds?: PadSampleIds): PadSampleIds => {
+        return Object.fromEntries(
+          Object.entries(candidatePadSampleIds ?? {}).map(([padIdRaw, oldSampleId]) => {
+            const importedSampleId = importedSampleIdMap.get(String(oldSampleId));
+            return [Number(padIdRaw), importedSampleId || ""];
+          })
+        ) as PadSampleIds;
+      };
+
+      const remappedPadSampleIds = remapPadSampleIds(manifest.state.padSampleIds);
+      const remappedPadGroups = manifest.state.padGroups
+        ? PAD_GROUP_IDS.reduce((groupsState, groupId) => {
+            const sourceGroup = manifest.state.padGroups?.[groupId];
+            if (!sourceGroup) {
+              groupsState[groupId] = createDefaultPadGroupState();
+              return groupsState;
+            }
+
+            groupsState[groupId] = {
+              ...sourceGroup,
+              padSampleIds: remapPadSampleIds(sourceGroup.padSampleIds),
+            };
+            return groupsState;
+          }, {} as PadGroupsState)
+        : undefined;
 
       const remappedMetadataOverrides = Object.fromEntries(
         Object.entries(manifest.sampleMetadataOverrides).flatMap(([oldSampleId, override]) => {
@@ -4155,34 +5050,289 @@ const DrumpadController = () => {
               onImportProject={handleImportProject}
               onMasterVolumeChange={setMasterVolume}
             />
-            <StepSequencer
-              patterns={patternOptions}
-              activePatternId={activePatternId}
-              rows={sequencerRows}
-              currentTick={currentStep}
-              isPlaying={isPlaying}
-              isRecording={isRecording}
-              isMetronomeEnabled={isMetronomeEnabled}
-              getCurrentTransposeSemitoneOffset={getCurrentTransposeSemitoneOffset}
-              bpm={sequencerBpm}
-              clockStepLength={sequencerClockStepLength}
-              engineStepLength={sequencerEngineStepLength}
-              onTogglePlayback={handleTogglePlayback}
-              onToggleRecording={handleToggleRecording}
-              onToggleMetronome={handleToggleMetronome}
-              onAddPattern={handleAddSequencerPattern}
-              onDuplicatePattern={handleDuplicateSequencerPattern}
-              onDeletePattern={handleDeleteSequencerPattern}
-              onSelectPattern={handleSelectSequencerPattern}
-              onExportPattern={handleExportSequencerPattern}
-              onExportRow={handleExportSequencerRow}
-              onToggleRowMute={handleSequencerRowMuteToggle}
-              onStepToggle={handleSequencerStepToggle}
-              onStepSet={handleSequencerStepSet}
-              onRowStepLengthChange={handleSequencerRowStepLengthChange}
-              onBpmChange={handleSequencerBpmChange}
-              onClockStepLengthChange={handleSequencerClockStepLengthChange}
-            />
+            <div className="rounded-2xl border border-[#b8b5aa] bg-[#efeee8]/95 p-3 shadow-[0_8px_20px_rgba(20,20,20,0.08)]">
+              <div className="grid h-12 w-full grid-cols-3 overflow-hidden rounded-lg border border-[#a8aba5] bg-[#d7d9d3]">
+                {(
+                  [
+                    { mode: "sequencer", label: "Sequencer" },
+                    { mode: "scenes", label: "Scenes" },
+                    { mode: "song", label: "Song Mode" },
+                  ] as const
+                ).map((option) => {
+                  const isActive = sequencerPanelMode === option.mode;
+                  return (
+                    <button
+                      key={option.mode}
+                      type="button"
+                      className={`h-full w-full px-3 text-sm font-extrabold tracking-wide border-y-0 border-l-0 ${
+                        option.mode === "song" ? "border-r-0" : "border-r border-[#a8aba5]"
+                      } transition-colors ${
+                        isActive
+                          ? "bg-[#ee8d3d] text-white"
+                          : "bg-[#ecebe6] text-[#515a6a] hover:bg-[#dfe2db]"
+                      }`}
+                      onClick={() => handleSelectSequencerPanelMode(option.mode)}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            {sequencerPanelMode === "sequencer" ? (
+              <StepSequencer
+                patterns={patternOptions}
+                activePatternId={activePatternId}
+                rows={sequencerRows}
+                currentTick={currentStep}
+                isPlaying={isPlaying}
+                isRecording={isRecording}
+                isMetronomeEnabled={isMetronomeEnabled}
+                getCurrentTransposeSemitoneOffset={getCurrentTransposeSemitoneOffset}
+                bpm={sequencerBpm}
+                clockStepLength={sequencerClockStepLength}
+                engineStepLength={sequencerEngineStepLength}
+                onTogglePlayback={handleTogglePlayback}
+                onToggleRecording={handleToggleRecording}
+                onToggleMetronome={handleToggleMetronome}
+                onAddPattern={handleAddSequencerPattern}
+                onDuplicatePattern={handleDuplicateSequencerPattern}
+                onDeletePattern={handleDeleteSequencerPattern}
+                onSelectPattern={handleSelectSequencerPattern}
+                onExportPattern={handleExportSequencerPattern}
+                onExportRow={handleExportSequencerRow}
+                onToggleRowMute={handleSequencerRowMuteToggle}
+                onStepToggle={handleSequencerStepToggle}
+                onStepSet={handleSequencerStepSet}
+                onRowStepLengthChange={handleSequencerRowStepLengthChange}
+                onBpmChange={handleSequencerBpmChange}
+                onClockStepLengthChange={handleSequencerClockStepLengthChange}
+              />
+            ) : null}
+            {sequencerPanelMode === "scenes" ? (
+              <div className="rounded-2xl border border-[#b8b5aa] bg-[#efeee8]/95 p-4 shadow-[0_8px_20px_rgba(20,20,20,0.08)]">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-[#515a6a] text-lg font-extrabold tracking-wide">SCENE MODE</h3>
+                    <p className="text-xs text-[#575757]">
+                      Choose one pattern per group. All selected group patterns play together.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="px-3 py-1.5 rounded-md text-xs font-bold border border-[#a8aba5] bg-[#d4d4ce] text-[#515a6a] hover:bg-[#c4c6bf] transition-colors"
+                      onClick={handleAddScene}
+                    >
+                      Add Scene
+                    </button>
+                    <button
+                      type="button"
+                      className="px-3 py-1.5 rounded-md text-xs font-bold border border-[#778299] bg-[#8f9bb0] text-[#f7f7f5] hover:bg-[#7e8ba2] transition-colors"
+                      disabled={!activeScene}
+                      onClick={() => {
+                        if (activeScene) {
+                          handleAddSceneToSong(activeScene.id);
+                        }
+                      }}
+                    >
+                      Add Scene To Song
+                    </button>
+                    <button
+                      type="button"
+                      className="px-3 py-1.5 rounded-md text-xs font-bold border border-[#bf5950] bg-[#d96d64] text-white hover:bg-[#c75d54] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                      disabled={sceneDefinitions.length <= 1 || !activeScene}
+                      onClick={handleDeleteActiveScene}
+                    >
+                      Delete Scene
+                    </button>
+                  </div>
+                </div>
+                <div className="mb-3 flex flex-wrap gap-2">
+                  {sceneDefinitions.map((sceneDefinition, sceneIndex) => {
+                    const isActiveScene = activeScene?.id === sceneDefinition.id;
+                    const isScenePlaying =
+                      sequencerPanelMode === "scenes" && isPlaying && isActiveScene;
+                    return (
+                      <div
+                        key={sceneDefinition.id}
+                        className="inline-flex overflow-hidden rounded-md border border-[#a8aba5]"
+                      >
+                        <button
+                          type="button"
+                          className={`px-3 py-1.5 text-xs font-bold border-y-0 border-l-0 border-r border-[#a8aba5] transition-colors ${
+                            isActiveScene
+                              ? "bg-[#fbfaf6] text-[#cc6e20]"
+                              : "bg-[#d7d9d3] text-[#515a6a] hover:bg-[#c8cbc2]"
+                          }`}
+                          onClick={() => handleSelectSceneDefinition(sceneDefinition.id)}
+                        >
+                          {sceneDefinition.name || `Scene ${sceneIndex + 1}`}
+                        </button>
+                        <button
+                          type="button"
+                          className={`inline-flex items-center justify-center px-2.5 py-1.5 border-y-0 border-r-0 border-l border-[#a8aba5] transition-colors ${
+                            isScenePlaying
+                              ? "bg-[#d96d64] text-white hover:bg-[#c75d54]"
+                              : "bg-[#95b257] text-[#f7f7f5] hover:bg-[#839f49]"
+                          }`}
+                          onClick={() => handleScenePlayStopToggle(sceneDefinition.id)}
+                          aria-label={isScenePlaying ? "Stop scene" : "Play scene"}
+                          title={isScenePlaying ? "Stop scene" : "Play scene"}
+                        >
+                          {isScenePlaying ? <Square size={12} /> : <Play size={12} />}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+                {activeScene ? (
+                  <div className="grid grid-cols-1 gap-2 lg:grid-cols-2 xl:grid-cols-4">
+                    {PAD_GROUP_IDS.map((groupId) => {
+                      const groupState = livePadGroupsState[groupId];
+                      const selectedPatternId = activeScene.selectedPatternIdsByGroup[groupId];
+                      return (
+                        <div
+                          key={groupId}
+                          className="rounded-lg border border-[#b8b5aa] bg-[#f7f6f2] px-3 py-2"
+                        >
+                          <div className="mb-1 text-[11px] font-bold tracking-wide text-[#515a6a]">
+                            Group {groupId}
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            {groupState.sequencerPatterns.map((pattern) => {
+                              const isSelectedPattern = selectedPatternId === pattern.id;
+                              return (
+                                <button
+                                  key={pattern.id}
+                                  type="button"
+                                  className={`w-full px-3 py-1 rounded-md text-left text-[11px] font-bold border transition-colors ${
+                                    isSelectedPattern
+                                      ? "border-[#cc6e20] bg-[#ee8d3d] text-white"
+                                      : "border-[#a8aba5] bg-[#d7d9d3] text-[#515a6a] hover:bg-[#c8cbc2]"
+                                  }`}
+                                  onClick={() => handleSelectScenePattern(groupId, pattern.id)}
+                                >
+                                  {pattern.name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {sequencerPanelMode === "song" ? (
+              <div className="rounded-2xl border border-[#b8b5aa] bg-[#efeee8]/95 p-4 shadow-[0_8px_20px_rgba(20,20,20,0.08)]">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-[#515a6a] text-lg font-extrabold tracking-wide">SONG MODE</h3>
+                    <p className="text-xs text-[#575757]">
+                      Arrange scenes into a song timeline. Drag to reorder.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={songSceneDraftId}
+                      onChange={(event) => setSongSceneDraftId(event.target.value)}
+                      className="rounded-md bg-[#fbfaf6] text-[#515a6a] text-xs px-2 py-1 border border-[#a8aba5] focus:outline-none focus:ring-1 focus:ring-[#ff8c2b]"
+                    >
+                      {sceneDefinitions.map((sceneDefinition, sceneIndex) => (
+                        <option key={sceneDefinition.id} value={sceneDefinition.id}>
+                          {sceneDefinition.name || `Scene ${sceneIndex + 1}`}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="px-3 py-1.5 rounded-md text-xs font-bold border border-[#778299] bg-[#8f9bb0] text-[#f7f7f5] hover:bg-[#7e8ba2] transition-colors"
+                      onClick={() => handleAddSceneToSong(songSceneDraftId)}
+                    >
+                      Add To Song
+                    </button>
+                    <button
+                      type="button"
+                      className={`px-3 py-1.5 rounded-md text-xs font-bold border transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+                        isPlaying && sequencerPanelMode === "song"
+                          ? "border-[#bf5950] bg-[#d96d64] text-white hover:bg-[#c75d54]"
+                          : "border-[#748b40] bg-[#95b257] text-[#f7f7f5] hover:bg-[#839f49]"
+                      }`}
+                      disabled={!songArrangement.length}
+                      onClick={handleTogglePlayback}
+                    >
+                      {isPlaying && sequencerPanelMode === "song" ? "Stop Song" : "Play Song"}
+                    </button>
+                  </div>
+                </div>
+                {songArrangement.length ? (
+                  <div className="space-y-2">
+                    {songArrangement.map((songEntry, songEntryIndex) => {
+                      const songScene = sceneDefinitionsById.get(songEntry.sceneId);
+                      const isCurrentlyPlayingEntry =
+                        isPlaying &&
+                        currentSongEntryIndex !== null &&
+                        currentSongEntryIndex === songEntryIndex;
+                      const isDraggingEntry = draggingSongEntryId === songEntry.id;
+                      return (
+                        <div
+                          key={songEntry.id}
+                          draggable
+                          onDragStart={() => setDraggingSongEntryId(songEntry.id)}
+                          onDragEnd={() => setDraggingSongEntryId(null)}
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            if (!draggingSongEntryId) {
+                              return;
+                            }
+                            handleMoveSongEntry(draggingSongEntryId, songEntry.id);
+                            setDraggingSongEntryId(null);
+                          }}
+                          className={`relative overflow-hidden rounded-lg border px-3 py-2 flex items-center justify-between gap-3 cursor-move transition-colors ${
+                            isCurrentlyPlayingEntry
+                              ? "border-[#cc6e20] bg-[#ffe4c7]"
+                              : "border-[#b8b5aa] bg-[#f7f6f2]"
+                          } ${isDraggingEntry ? "opacity-70" : ""}`}
+                        >
+                          {isCurrentlyPlayingEntry ? (
+                            <div
+                              className="pointer-events-none absolute inset-y-0 left-0 bg-[rgba(238,141,61,0.28)]"
+                              style={{
+                                width: `${Math.round((currentSongEntryProgress ?? 0) * 100)}%`,
+                              }}
+                            />
+                          ) : null}
+                          <div className="relative z-10 min-w-0">
+                            <div className="text-[11px] font-extrabold tracking-wide text-[#515a6a]">
+                              {songEntryIndex + 1}. {songScene?.name ?? "Scene"}
+                            </div>
+                            <div className="text-[10px] text-[#666]">
+                              {isCurrentlyPlayingEntry ? "Currently playing" : "Drag to reorder"}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="relative z-10 px-2 py-1 rounded-md text-[11px] font-bold border border-[#bf5950] bg-[#d96d64] text-white hover:bg-[#c75d54] transition-colors"
+                            onClick={() => handleDeleteSongEntry(songEntry.id)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-md border border-dashed border-[#b8b5aa] bg-[#f7f6f2] px-3 py-3 text-xs text-[#575757]">
+                    No scenes in song timeline yet. Add scenes to build a song.
+                  </div>
+                )}
+              </div>
+            ) : null}
               <div className="relative overflow-hidden rounded-2xl border border-[#b8b5aa] bg-[linear-gradient(165deg,rgba(247,246,241,0.97),rgba(234,232,224,0.92))] px-4 py-4 shadow-[0_14px_28px_rgba(28,28,28,0.09)] sm:px-5">
                 <div className="pointer-events-none absolute -top-20 -right-10 h-48 w-48 rounded-full bg-[#ffffff]/35 blur-2xl" />
                 <div className="relative">
@@ -4379,6 +5529,23 @@ const DrumpadController = () => {
         className="hidden"
         onChange={handleSampleRootPromptKitFileChange}
       />
+      {songModeStatusMessage ? (
+        <div className="fixed inset-0 z-[4000] bg-black/35 backdrop-blur-[1px] flex items-center justify-center p-4">
+          <div className="w-full max-w-sm rounded-xl border border-[#a8aba5] bg-[#f6f5ef] p-4 shadow-2xl">
+            <h4 className="text-[#515a6a] text-base font-bold mb-2">Song Updated</h4>
+            <p className="text-sm text-[#575757]">{songModeStatusMessage}</p>
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                className="px-4 py-2 rounded-md text-xs font-bold bg-[#ff8c2b] hover:bg-[#ed7d1f] text-[#515a6a] border border-[#d66d14] transition-colors"
+                onClick={() => setSongModeStatusMessage("")}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {isSaveProjectModalOpen ? (
         <div className="fixed inset-0 z-[4000] bg-black/35 backdrop-blur-[1px] flex items-center justify-center p-4">
           <div className="w-full max-w-md rounded-xl border border-[#a8aba5] bg-[#f6f5ef] p-4 shadow-2xl">

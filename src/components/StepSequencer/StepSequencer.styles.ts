@@ -34,8 +34,13 @@ export const getMetronomeButtonClassName = (isMetronomeEnabled: boolean): string
 
 export const addPatternButtonClassName =
   `${transportButtonBaseClassName} bg-[#515a6a] border-[#3f4653] text-[#f7f7f5] hover:bg-[#454d5b]`;
-export const sequencerToggleButtonClassName =
-  `${transportButtonBaseClassName} bg-[#d4d4ce] border-[#a8aba5] text-[#515a6a] hover:bg-[#c6c6bf]`;
+export const getSequencerToggleButtonClassName = (isExpanded: boolean): string => {
+  if (!isExpanded) {
+    return `${transportButtonBaseClassName} sequencer-expand-glow bg-[#ff8c2b] border-[#cc6e20] text-white hover:bg-[#ff9b45]`;
+  }
+
+  return `${transportButtonBaseClassName} bg-[#d4d4ce] border-[#a8aba5] text-[#515a6a] hover:bg-[#c6c6bf]`;
+};
 export const duplicatePatternButtonClassName =
   `${transportButtonBaseClassName} bg-[#8f9bb0] border-[#778299] text-[#515a6a] hover:bg-[#7e8ba2]`;
 export const deletePatternButtonClassName =

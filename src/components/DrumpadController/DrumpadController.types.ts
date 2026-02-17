@@ -55,3 +55,17 @@ export interface PadGroupState {
 }
 
 export type PadGroupsState = Record<PadGroupId, PadGroupState>;
+
+export type SequencerPanelMode = "sequencer" | "scenes" | "song";
+export type ScenePatternSelection = Record<PadGroupId, string | null>;
+
+export interface SceneDefinition {
+  id: string;
+  name: string;
+  selectedPatternIdsByGroup: ScenePatternSelection;
+}
+
+export interface SongArrangementEntry {
+  id: string;
+  sceneId: string;
+}

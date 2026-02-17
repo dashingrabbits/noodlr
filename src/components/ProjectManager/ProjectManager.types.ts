@@ -11,13 +11,20 @@ import type {
   PadStepSequence,
   PadSampleIds,
   PadVolumes,
+  SceneDefinition,
+  SequencerPanelMode,
   SequencerPattern,
+  SongArrangementEntry,
 } from "../DrumpadController/DrumpadController.types";
 import type { SequencerStepLength } from "../StepSequencer/StepSequencer.utilities";
 import type { SampleMetadataOverrides } from "../../integrations/samples/sample.types";
 
 export interface ProjectState {
   masterVolume: number;
+  sequencerPanelMode?: SequencerPanelMode;
+  sceneDefinitions?: SceneDefinition[];
+  activeSceneId?: string;
+  songArrangement?: SongArrangementEntry[];
   activePadGroupId?: PadGroupId;
   padGroups?: PadGroupsState;
   padVolumes: PadVolumes;

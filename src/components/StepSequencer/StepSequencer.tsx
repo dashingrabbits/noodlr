@@ -33,8 +33,8 @@ import {
   getMetronomeButtonClassName,
   getTransportButtonClassName,
   getRecordButtonClassName,
+  getSequencerToggleButtonClassName,
   patternSelectClassName,
-  sequencerToggleButtonClassName,
   rowActionButtonClassName,
   rowContainerClassName,
   rowMuteButtonActiveClassName,
@@ -153,7 +153,7 @@ const StepSequencer = ({
         <button
           type="button"
           onClick={() => setIsExpanded((previous) => !previous)}
-          className={sequencerToggleButtonClassName}
+          className={getSequencerToggleButtonClassName(isExpanded)}
           aria-expanded={isExpanded}
           aria-label={isExpanded ? "Collapse step sequencer" : "Expand step sequencer"}
         >

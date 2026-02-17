@@ -68,3 +68,20 @@ textarea:disabled,
   cursor: pointer;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
 }
+
+@keyframes teGlowPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(255, 140, 43, 0.45), 0 0 10px rgba(255, 140, 43, 0.34),
+      0 0 18px rgba(255, 140, 43, 0.2);
+  }
+
+  50% {
+    box-shadow: 0 0 0 1px rgba(255, 140, 43, 0.65), 0 0 16px rgba(255, 140, 43, 0.58),
+      0 0 28px rgba(255, 140, 43, 0.4);
+  }
+}
+
+.sequencer-expand-glow {
+  animation: teGlowPulse 1.7s ease-in-out infinite;
+}
