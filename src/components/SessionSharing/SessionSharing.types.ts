@@ -1,4 +1,8 @@
-import type { SessionConnectionStatus } from "../DrumpadController/hooks/session-collaboration";
+import type {
+  SessionConnectionStatus,
+  SessionJoinRequest,
+  SessionParticipant,
+} from "../DrumpadController/hooks/session-collaboration";
 
 export interface SessionSharingProps {
   sessionConnectionStatus: SessionConnectionStatus;
@@ -6,11 +10,13 @@ export interface SessionSharingProps {
   sessionId: string;
   isSessionHost: boolean;
   isSessionEndPromptOpen: boolean;
+  sessionParticipants: SessionParticipant[];
   onClearSessionError: () => void;
   onCopySessionId: () => Promise<void>;
   onHandleSessionEndDownload: () => Promise<void>;
   onHandleSessionEndDiscard: () => void;
-  onJoinSession: (sessionId: string) => Promise<void>;
+  onJoinSession: (input: SessionJoinRequest) => Promise<void>;
+  onKickSessionUser: (targetClientId: string) => void;
   onLeaveSession: () => void;
   onResolveSessionEndPrompt: () => void;
   onShareSession: () => Promise<void>;

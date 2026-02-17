@@ -17,16 +17,19 @@ const SessionSharing = ({
   sessionId,
   isSessionHost,
   isSessionEndPromptOpen,
+  sessionParticipants,
   onClearSessionError,
   onCopySessionId,
   onHandleSessionEndDownload,
   onHandleSessionEndDiscard,
   onJoinSession,
+  onKickSessionUser,
   onLeaveSession,
   onResolveSessionEndPrompt,
   onShareSession,
 }: SessionSharingProps) => {
   const [joinSessionIdDraft, setJoinSessionIdDraft] = useState("");
+  const [joinSessionUserNameDraft, setJoinSessionUserNameDraft] = useState("");
   const [isSessionActionPending, setIsSessionActionPending] = useState(false);
 
   const runSessionAction = useCallback(
@@ -54,12 +57,18 @@ const SessionSharing = ({
     [sessionConnectionStatus]
   );
   const leaveButtonLabel = isSessionHost ? "End Session" : "Leave";
+  const isConnected = sessionConnectionStatus === "connected";
+  const connectionDotClassName = isConnected ? "bg-[#4f8a2d]" : "bg-[#b13f2f]";
 
   return (
     <div className={sessionCardClassName}>
       <div className="mb-2 flex items-center justify-between">
-        <label className={sessionLabelClassName}>SESSION COLLAB</label>
+        <label className={sessionLabelClassName}>SESSION</label>
         <span className={`${sessionStatusBadgeBaseClassName} ${sessionStatusToneClassName}`}>
+          <span
+            aria-hidden
+            className={`mr-1.5 inline-block h-2 w-2 rounded-full align-middle ${connectionDotClassName}`}
+          />
           {sessionStatusLabel}
         </span>
       </div>
@@ -96,15 +105,31 @@ const SessionSharing = ({
           placeholder="Paste session ID"
           className={`${sessionInputClassName} flex-1`}
         />
+        <input
+          type="text"
+          value={joinSessionUserNameDraft}
+          onChange={(event) => {
+            setJoinSessionUserNameDraft(event.target.value);
+            if (sessionError) {
+              onClearSessionError();
+            }
+          }}
+          placeholder="Username"
+          className={`${sessionInputClassName} flex-1`}
+        />
         <button
           onClick={() => {
             const normalizedSessionId = joinSessionIdDraft.trim();
-            if (!normalizedSessionId) {
+            const normalizedUserName = joinSessionUserNameDraft.trim();
+            if (!normalizedSessionId || !normalizedUserName) {
               return;
             }
 
             void runSessionAction(async () => {
-              await onJoinSession(normalizedSessionId);
+              await onJoinSession({
+                sessionId: normalizedSessionId,
+                username: normalizedUserName,
+              });
             });
           }}
           disabled={isSessionActionPending}
@@ -133,6 +158,35 @@ const SessionSharing = ({
           Copy
         </button>
       </div>
+      {isConnected && sessionParticipants.length > 0 ? (
+        <div className="mt-2 rounded-md border border-[#b8b5aa] bg-[#f4f3ee] p-2">
+          <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-[#515a6a]">
+            Users In Session
+          </div>
+          <ul className="space-y-1">
+            {sessionParticipants.map((participant) => (
+              <li
+                key={participant.clientId}
+                className="flex items-center justify-between gap-2 text-[11px] text-[#515a6a]"
+              >
+                <span className="truncate">
+                  {participant.isHost ? "Host" : participant.username}
+                  {participant.isSelf ? " (You)" : ""}
+                </span>
+                {isSessionHost && !participant.isHost ? (
+                  <button
+                    type="button"
+                    onClick={() => onKickSessionUser(participant.clientId)}
+                    className="rounded-md border border-[#b86557] bg-[#d88778] px-2 py-0.5 text-[10px] font-bold text-[#fdf7f5] transition-colors hover:bg-[#c87363]"
+                  >
+                    Kick
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {sessionError ? (
         <p className="mt-2 text-[11px] text-[#a6382f] inline-flex items-center gap-1">
           <Link2 size={12} />

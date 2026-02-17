@@ -946,6 +946,7 @@ const DrumpadController = () => {
     clearSessionError,
     copySessionId,
     handleJoinSession,
+    handleKickSessionUser,
     handleLeaveSession,
     handleResolveSessionEndPrompt,
     handleShareSession,
@@ -955,6 +956,7 @@ const DrumpadController = () => {
     sessionConnectionStatus,
     sessionError,
     sessionId,
+    sessionParticipants,
   } = useSessionCollaboration({
     activePadGroupIdRef,
     activeSceneRef,
@@ -1030,6 +1032,14 @@ const DrumpadController = () => {
     clearSessionEnvironment();
     handleCreateNewProject();
   }, [clearSessionEnvironment, handleCreateNewProject, handleExportProject]);
+
+  const handleJoinSessionFromPrompt = useCallback(
+    async (input: Parameters<typeof handleJoinSession>[0]) => {
+      await handleJoinSession(input);
+      setIsSampleRootDirPromptOpen(false);
+    },
+    [handleJoinSession, setIsSampleRootDirPromptOpen]
+  );
 
   useLifecycleCleanupEffect({
     audioContextRef,
@@ -1178,9 +1188,11 @@ const DrumpadController = () => {
                 onHandleSessionEndDownload: handleSessionEndDownload,
                 onHandleSessionEndDiscard: handleSessionEndDiscard,
                 onJoinSession: handleJoinSession,
+                onKickSessionUser: handleKickSessionUser,
                 onLeaveSession: handleLeaveSession,
                 onResolveSessionEndPrompt: handleResolveSessionEndPrompt,
                 onShareSession: handleShareSession,
+                sessionParticipants,
               }}
               rootDir={sampleRootDir}
               supportsDirectoryPicker={supportsDirectoryPicker}
@@ -1260,9 +1272,13 @@ const DrumpadController = () => {
         setProjectNameDraft={setProjectNameDraft}
         setSampleError={setSampleError}
         setSampleRootDirDraft={setSampleRootDirDraft}
+        sessionConnectionStatus={sessionConnectionStatus}
+        sessionError={sessionError}
         songModeStatusMessage={songModeStatusMessage}
         supportsDirectoryPicker={supportsDirectoryPicker}
+        onClearSessionError={clearSessionError}
         onClearSongModeStatusMessage={() => setSongModeStatusMessage("")}
+        onJoinSessionFromPrompt={handleJoinSessionFromPrompt}
       />
     </>
   );

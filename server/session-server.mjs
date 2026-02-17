@@ -15,6 +15,7 @@ const MAX_SAMPLE_TAGS = 32;
 const MAX_TAG_LENGTH = 48;
 const MAX_RELATIVE_PATH_LENGTH = 512;
 const MAX_MUSICAL_KEY_LENGTH = 16;
+const MAX_USERNAME_LENGTH = 32;
 const MAX_MESSAGES_PER_MINUTE = 240;
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_PEERS_PER_SESSION = 12;
@@ -53,6 +54,7 @@ const SESSION_END_REASONS = ["owner_left", "ended_by_host", "owner_disconnected"
 
 const sessionIdSchema = z.string().regex(/^[A-Za-z0-9_-]{24,80}$/);
 const clientIdSchema = z.string().regex(/^[A-Za-z0-9_-]{16,80}$/);
+const usernameSchema = z.string().trim().min(1).max(MAX_USERNAME_LENGTH);
 
 const sharedSampleSchema = z.object({
   id: z.string().min(1).max(MAX_SAMPLE_ID_LENGTH),
@@ -75,6 +77,7 @@ const joinSessionMessageSchema = z.object({
   type: z.literal("join_session"),
   clientId: clientIdSchema,
   sessionId: sessionIdSchema,
+  username: usernameSchema,
 });
 
 const leaveSessionMessageSchema = z.object({
@@ -87,6 +90,13 @@ const endSessionMessageSchema = z.object({
   type: z.literal("end_session"),
   clientId: clientIdSchema,
   sessionId: sessionIdSchema,
+});
+
+const kickUserMessageSchema = z.object({
+  type: z.literal("kick_user"),
+  clientId: clientIdSchema,
+  sessionId: sessionIdSchema,
+  targetClientId: clientIdSchema,
 });
 
 const upsertStateMessageSchema = z.object({
@@ -122,6 +132,7 @@ const clientMessageSchema = z.union([
   joinSessionMessageSchema,
   leaveSessionMessageSchema,
   endSessionMessageSchema,
+  kickUserMessageSchema,
   upsertStateMessageSchema,
 ]);
 
@@ -194,6 +205,60 @@ const serializeSessionSnapshot = (session) => ({
   samples: Array.from(session.samplesById.values()),
 });
 
+const serializeSessionParticipants = (session) => {
+  return Array.from(session.participantNamesByClientId.entries())
+    .map(([clientId, username]) => ({
+      clientId,
+      username,
+      isHost: clientId === session.ownerClientId,
+    }))
+    .sort((left, right) => {
+      if (left.isHost && !right.isHost) {
+        return -1;
+      }
+      if (!left.isHost && right.isHost) {
+        return 1;
+      }
+
+      return left.username.localeCompare(right.username);
+    });
+};
+
+const broadcastSessionParticipants = (session) => {
+  const participants = serializeSessionParticipants(session);
+  for (const peer of session.clients) {
+    sendMessage(peer, {
+      type: "session_participants",
+      sessionId: session.id,
+      participants,
+    });
+  }
+};
+
+const reserveParticipantUsername = (session, requestedUsername, clientId) => {
+  if (clientId === session.ownerClientId) {
+    return "Host";
+  }
+
+  const normalizedBase = requestedUsername.trim().slice(0, MAX_USERNAME_LENGTH) || "User";
+  const existingUsernames = new Set(
+    Array.from(session.participantNamesByClientId.entries())
+      .filter(([existingClientId]) => existingClientId !== clientId)
+      .map(([, username]) => username.toLowerCase())
+  );
+
+  let candidate = normalizedBase;
+  let suffix = 2;
+  while (existingUsernames.has(candidate.toLowerCase())) {
+    const suffixText = ` ${suffix}`;
+    const maxBaseLength = Math.max(1, MAX_USERNAME_LENGTH - suffixText.length);
+    candidate = `${normalizedBase.slice(0, maxBaseLength)}${suffixText}`;
+    suffix += 1;
+  }
+
+  return candidate;
+};
+
 const sendMessage = (socket, message) => {
   if (socket.readyState !== SOCKET_OPEN_STATE) {
     return;
@@ -218,7 +283,7 @@ const broadcastSessionUpdate = (session, senderSocket, payload, senderClientId) 
   }
 };
 
-const attachSocketToSession = (socket, sessionId, clientId) => {
+const attachSocketToSession = (socket, sessionId, clientId, username) => {
   const clientState = clientStateBySocket.get(socket);
   if (!clientState) {
     return;
@@ -226,7 +291,14 @@ const attachSocketToSession = (socket, sessionId, clientId) => {
 
   if (clientState.sessionId && sessions.has(clientState.sessionId)) {
     const existingSession = sessions.get(clientState.sessionId);
-    existingSession?.clients.delete(socket);
+    if (existingSession) {
+      existingSession.clients.delete(socket);
+      if (clientState.clientId) {
+        existingSession.participantNamesByClientId.delete(clientState.clientId);
+      }
+      existingSession.updatedAt = now();
+      broadcastSessionParticipants(existingSession);
+    }
   }
 
   const targetSession = sessions.get(sessionId);
@@ -239,6 +311,10 @@ const attachSocketToSession = (socket, sessionId, clientId) => {
   }
 
   targetSession.clients.add(socket);
+  targetSession.participantNamesByClientId.set(
+    clientId,
+    reserveParticipantUsername(targetSession, username, clientId)
+  );
   targetSession.updatedAt = now();
   clientState.clientId = clientId;
   clientState.sessionId = sessionId;
@@ -247,16 +323,22 @@ const attachSocketToSession = (socket, sessionId, clientId) => {
 const detachSocketFromSession = (socket) => {
   const clientState = clientStateBySocket.get(socket);
   if (!clientState?.sessionId) {
-    return;
+    return null;
   }
 
+  const priorSessionId = clientState.sessionId;
+  const priorClientId = clientState.clientId;
   const session = sessions.get(clientState.sessionId);
   if (session) {
     session.clients.delete(socket);
+    if (clientState.clientId) {
+      session.participantNamesByClientId.delete(clientState.clientId);
+    }
     session.updatedAt = now();
   }
 
   clientState.sessionId = null;
+  return { priorSessionId, priorClientId };
 };
 
 const rateLimitSocket = (socket) => {
@@ -283,6 +365,7 @@ const clearSessionData = (sessionId) => {
   }
 
   session.samplesById.clear();
+  session.participantNamesByClientId.clear();
   session.projectState = {};
   session.sampleMetadataOverrides = {};
   session.updatedAt = now();
@@ -390,16 +473,18 @@ app.get("/", { websocket: true }, (socket, request) => {
           projectState: {},
           sampleMetadataOverrides: {},
           samplesById: new Map(),
+          participantNamesByClientId: new Map(),
           clients: new Set(),
         });
 
-        attachSocketToSession(socket, sessionId, message.clientId);
+        attachSocketToSession(socket, sessionId, message.clientId, "Host");
         const session = sessions.get(sessionId);
         sendMessage(socket, {
           type: "session_created",
           sessionId,
           revision: session.revision,
           snapshot: serializeSessionSnapshot(session),
+          participants: serializeSessionParticipants(session),
         });
         return;
       }
@@ -410,13 +495,15 @@ app.get("/", { websocket: true }, (socket, request) => {
           throw new Error("Session not found.");
         }
 
-        attachSocketToSession(socket, message.sessionId, message.clientId);
+        attachSocketToSession(socket, message.sessionId, message.clientId, message.username);
         sendMessage(socket, {
           type: "session_joined",
           sessionId: session.id,
           revision: session.revision,
           snapshot: serializeSessionSnapshot(session),
+          participants: serializeSessionParticipants(session),
         });
+        broadcastSessionParticipants(session);
         return;
       }
 
@@ -441,6 +528,7 @@ app.get("/", { websocket: true }, (socket, request) => {
           type: "session_left",
           sessionId: message.sessionId,
         });
+        broadcastSessionParticipants(session);
         return;
       }
 
@@ -460,6 +548,61 @@ app.get("/", { websocket: true }, (socket, request) => {
         }
 
         endSession(session.id, clientState.clientId ?? message.clientId, "ended_by_host");
+        return;
+      }
+
+      if (message.type === "kick_user") {
+        const clientState = clientStateBySocket.get(socket);
+        if (!clientState || clientState.sessionId !== message.sessionId) {
+          throw new Error("Socket is not joined to the requested session.");
+        }
+
+        const session = sessions.get(message.sessionId);
+        if (!session) {
+          throw new Error("Session not found.");
+        }
+
+        if (session.ownerClientId !== clientState.clientId) {
+          throw new Error("Only the session owner can kick users.");
+        }
+
+        if (message.targetClientId === session.ownerClientId) {
+          throw new Error("Session owner cannot be kicked.");
+        }
+
+        const targetSocket = Array.from(session.clients).find((peer) => {
+          const peerState = clientStateBySocket.get(peer);
+          return peerState?.clientId === message.targetClientId;
+        });
+
+        if (!targetSocket) {
+          throw new Error("Target user not found in this session.");
+        }
+
+        const targetState = clientStateBySocket.get(targetSocket);
+        if (targetState) {
+          targetState.sessionId = null;
+        }
+
+        session.clients.delete(targetSocket);
+        session.participantNamesByClientId.delete(message.targetClientId);
+        session.updatedAt = now();
+
+        sendMessage(targetSocket, {
+          type: "session_kicked",
+          sessionId: session.id,
+          kickedByClientId: clientState.clientId ?? message.clientId,
+        });
+
+        if (targetSocket.readyState === SOCKET_OPEN_STATE) {
+          try {
+            targetSocket.close(1000, "Kicked by host");
+          } catch {
+            // Ignore peer close failures.
+          }
+        }
+
+        broadcastSessionParticipants(session);
         return;
       }
 
@@ -560,7 +703,10 @@ app.get("/", { websocket: true }, (socket, request) => {
 
     if (session.ownerClientId === priorClientId) {
       endSession(priorSessionId, priorClientId, "owner_disconnected");
+      return;
     }
+
+    broadcastSessionParticipants(session);
   });
 });
 

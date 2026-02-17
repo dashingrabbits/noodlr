@@ -295,3 +295,42 @@ export const readWebSocketMessageText = async (data: unknown): Promise<string> =
 
   throw new Error("Unsupported websocket payload type.");
 };
+
+export const copyTextToClipboard = async (value: string): Promise<void> => {
+  const normalizedValue = value.trim();
+  if (!normalizedValue) {
+    throw new Error("Nothing to copy.");
+  }
+
+  if (typeof navigator !== "undefined" && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(normalizedValue);
+      return;
+    } catch {
+      // Fall through to legacy copy path.
+    }
+  }
+
+  if (typeof document === "undefined") {
+    throw new Error("Clipboard API is unavailable in this browser.");
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = normalizedValue;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+  document.body.appendChild(textarea);
+
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+
+  const didCopy = document.execCommand("copy");
+  document.body.removeChild(textarea);
+
+  if (!didCopy) {
+    throw new Error("Clipboard API is unavailable in this browser.");
+  }
+};

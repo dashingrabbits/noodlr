@@ -13,6 +13,21 @@ import type {
 
 export type SessionConnectionStatus = "disconnected" | "connecting" | "connected";
 export type SessionEndedReason = "owner_left" | "ended_by_host" | "owner_disconnected" | "expired";
+export type SessionParticipant = {
+  clientId: string;
+  username: string;
+  isHost: boolean;
+  isSelf: boolean;
+};
+export type SessionParticipantServerPayload = {
+  clientId: string;
+  username: string;
+  isHost: boolean;
+};
+export type SessionJoinRequest = {
+  sessionId: string;
+  username: string;
+};
 
 export type SharedSessionSample = {
   id: string;
@@ -43,6 +58,7 @@ export type SessionCreateResponse = {
   sessionId: string;
   revision: number;
   snapshot: SessionSnapshotPayload;
+  participants: SessionParticipantServerPayload[];
 };
 
 export type SessionJoinResponse = {
@@ -50,6 +66,7 @@ export type SessionJoinResponse = {
   sessionId: string;
   revision: number;
   snapshot: SessionSnapshotPayload;
+  participants: SessionParticipantServerPayload[];
 };
 
 export type SessionUpdateResponse = {
@@ -76,6 +93,18 @@ export type SessionErrorResponse = {
   message: string;
 };
 
+export type SessionParticipantsResponse = {
+  type: "session_participants";
+  sessionId: string;
+  participants: SessionParticipantServerPayload[];
+};
+
+export type SessionKickedResponse = {
+  type: "session_kicked";
+  sessionId: string;
+  kickedByClientId: string;
+};
+
 export type SessionEndedResponse = {
   type: "session_ended";
   sessionId: string;
@@ -89,6 +118,8 @@ export type SessionServerMessage =
   | SessionUpdateResponse
   | SessionLeaveResponse
   | SessionSyncAckResponse
+  | SessionParticipantsResponse
+  | SessionKickedResponse
   | SessionEndedResponse
   | SessionErrorResponse;
 
@@ -101,6 +132,7 @@ export type SessionJoinMessage = {
   type: "join_session";
   clientId: string;
   sessionId: string;
+  username: string;
 };
 
 export type SessionLeaveMessage = {
@@ -120,6 +152,13 @@ export type SessionUpsertStateMessage = {
   };
 };
 
+export type SessionKickUserMessage = {
+  type: "kick_user";
+  clientId: string;
+  sessionId: string;
+  targetClientId: string;
+};
+
 export type SessionClientMessage =
   | SessionCreateMessage
   | SessionJoinMessage
@@ -129,6 +168,7 @@ export type SessionClientMessage =
       clientId: string;
       sessionId: string;
     }
+  | SessionKickUserMessage
   | SessionUpsertStateMessage;
 
 export type PendingSessionAction = {
@@ -159,7 +199,8 @@ export type UseSessionCollaborationResult = {
   clearSessionEnvironment: () => void;
   clearSessionError: () => void;
   copySessionId: () => Promise<void>;
-  handleJoinSession: (sessionId: string) => Promise<void>;
+  handleJoinSession: (input: SessionJoinRequest) => Promise<void>;
+  handleKickSessionUser: (targetClientId: string) => void;
   handleLeaveSession: () => void;
   handleResolveSessionEndPrompt: () => void;
   handleShareSession: () => Promise<void>;
@@ -169,4 +210,5 @@ export type UseSessionCollaborationResult = {
   sessionConnectionStatus: SessionConnectionStatus;
   sessionError: string | null;
   sessionId: string;
+  sessionParticipants: SessionParticipant[];
 };

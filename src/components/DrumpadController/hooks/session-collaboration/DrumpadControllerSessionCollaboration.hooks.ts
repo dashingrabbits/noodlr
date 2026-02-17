@@ -13,6 +13,7 @@ import {
 import {
   base64ToBlob,
   blobToBase64,
+  copyTextToClipboard,
   createCollaborativeProjectState,
   mergeCollaborativeProjectStateWithLocalView,
   createSampleAssetFromSharedSample,
@@ -30,6 +31,9 @@ import type {
   PendingSessionAction,
   SessionClientMessage,
   SessionConnectionStatus,
+  SessionJoinRequest,
+  SessionParticipant,
+  SessionParticipantServerPayload,
   SessionServerMessage,
   SessionSnapshotPayload,
   SessionUpdatePayload,
@@ -58,6 +62,7 @@ export const useSessionCollaboration = ({
   const [sessionId, setSessionId] = useState("");
   const [isSessionHost, setIsSessionHost] = useState(false);
   const [isSessionEndPromptOpen, setIsSessionEndPromptOpen] = useState(false);
+  const [sessionParticipants, setSessionParticipants] = useState<SessionParticipant[]>([]);
 
   const socketRef = useRef<WebSocket | null>(null);
   const pendingSessionActionRef = useRef<PendingSessionAction | null>(null);
@@ -102,6 +107,7 @@ export const useSessionCollaboration = ({
     setSessionConnectionStatus("disconnected");
     setSessionId("");
     setIsSessionHost(false);
+    setSessionParticipants([]);
     uploadedSampleIdsRef.current.clear();
     resetSyncSchedulingState();
     lastSyncedStateHashRef.current = "";
@@ -138,6 +144,20 @@ export const useSessionCollaboration = ({
     socket.send(JSON.stringify(message));
     return true;
   }, []);
+
+  const mapSessionParticipants = useCallback(
+    (participants?: SessionParticipantServerPayload[]): SessionParticipant[] => {
+      if (!Array.isArray(participants)) {
+        return [];
+      }
+
+      return participants.map((participant) => ({
+        ...participant,
+        isSelf: participant.clientId === clientIdRef.current,
+      }));
+    },
+    []
+  );
 
   const closeSocketConnection = useCallback(
     (options?: { keepError?: boolean }) => {
@@ -562,6 +582,19 @@ export const useSessionCollaboration = ({
             setSessionId(message.sessionId);
             setIsSessionHost(true);
             setIsSessionEndPromptOpen(false);
+            const nextParticipants = mapSessionParticipants(message.participants);
+            setSessionParticipants(
+              nextParticipants.length > 0
+                ? nextParticipants
+                : [
+                    {
+                      clientId: clientIdRef.current,
+                      username: "Host",
+                      isHost: true,
+                      isSelf: true,
+                    },
+                  ]
+            );
             uploadedSampleIdsRef.current = new Set(
               message.snapshot.samples.map((sample) => sample.id)
             );
@@ -579,6 +612,19 @@ export const useSessionCollaboration = ({
             setSessionId(message.sessionId);
             setIsSessionHost(false);
             setIsSessionEndPromptOpen(false);
+            const nextParticipants = mapSessionParticipants(message.participants);
+            setSessionParticipants(
+              nextParticipants.length > 0
+                ? nextParticipants
+                : [
+                    {
+                      clientId: clientIdRef.current,
+                      username: "You",
+                      isHost: false,
+                      isSelf: true,
+                    },
+                  ]
+            );
             uploadedSampleIdsRef.current = new Set(
               message.snapshot.samples.map((sample) => sample.id)
             );
@@ -605,6 +651,20 @@ export const useSessionCollaboration = ({
                 message.payload.sampleMetadataOverrides !== undefined,
               sampleCount: message.payload.samples?.length ?? 0,
             });
+            return;
+          }
+
+          if (message.type === "session_participants") {
+            const nextParticipants = mapSessionParticipants(message.participants);
+            setSessionParticipants(nextParticipants);
+            const selfParticipant = nextParticipants.find((participant) => participant.isSelf);
+            setIsSessionHost(Boolean(selfParticipant?.isHost));
+            return;
+          }
+
+          if (message.type === "session_kicked") {
+            setSessionError("You were removed from the session by the host.");
+            closeSocketConnection({ keepError: true });
             return;
           }
 
@@ -660,6 +720,7 @@ export const useSessionCollaboration = ({
     applyIncomingSessionSnapshot,
     closeSocketConnection,
     debugSync,
+    mapSessionParticipants,
     queueSessionSync,
     rejectPendingSessionAction,
     resetSessionState,
@@ -700,11 +761,15 @@ export const useSessionCollaboration = ({
   }, [openSocketConnection, sendSocketMessage]);
 
   const handleJoinSession = useCallback(
-    async (candidateSessionId: string) => {
+    async ({ sessionId: candidateSessionId, username }: SessionJoinRequest) => {
       try {
         const normalizedSessionId = normalizeSessionIdInput(candidateSessionId);
         if (!isValidSessionId(normalizedSessionId)) {
           throw new Error("Session ID format is invalid.");
+        }
+        const normalizedUserName = username.trim();
+        if (!normalizedUserName) {
+          throw new Error("Username is required to join a session.");
         }
 
         const socket = await openSocketConnection();
@@ -720,6 +785,7 @@ export const useSessionCollaboration = ({
             type: "join_session",
             clientId: clientIdRef.current,
             sessionId: normalizedSessionId,
+            username: normalizedUserName,
           });
 
           if (!didSend) {
@@ -738,6 +804,23 @@ export const useSessionCollaboration = ({
       }
     },
     [openSocketConnection, sendSocketMessage]
+  );
+
+  const handleKickSessionUser = useCallback(
+    (targetClientId: string) => {
+      const normalizedTargetClientId = targetClientId.trim();
+      if (!normalizedTargetClientId || !sessionId || !isSessionHost) {
+        return;
+      }
+
+      sendSocketMessage({
+        type: "kick_user",
+        clientId: clientIdRef.current,
+        sessionId,
+        targetClientId: normalizedTargetClientId,
+      });
+    },
+    [isSessionHost, sendSocketMessage, sessionId]
   );
 
   const handleLeaveSession = useCallback(() => {
@@ -776,11 +859,7 @@ export const useSessionCollaboration = ({
         throw new Error("No active session to copy.");
       }
 
-      if (!navigator.clipboard) {
-        throw new Error("Clipboard API is unavailable in this browser.");
-      }
-
-      await navigator.clipboard.writeText(sessionId);
+      await copyTextToClipboard(sessionId);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to copy session ID.";
       setSessionError(message);
@@ -813,6 +892,7 @@ export const useSessionCollaboration = ({
     clearSessionError,
     copySessionId,
     handleJoinSession,
+    handleKickSessionUser,
     handleLeaveSession,
     handleResolveSessionEndPrompt,
     handleShareSession,
@@ -822,5 +902,6 @@ export const useSessionCollaboration = ({
     sessionConnectionStatus,
     sessionError,
     sessionId,
+    sessionParticipants,
   };
 };

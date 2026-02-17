@@ -1,3 +1,4 @@
+import { useCallback, useState } from "react";
 import PadSampleAssignModal from "../../../PadSampleAssignModal";
 import PadSampleEditorModal from "../../../PadSampleEditorModal";
 import {
@@ -66,10 +67,40 @@ const DrumpadControllerOverlays = ({
   setProjectNameDraft,
   setSampleError,
   setSampleRootDirDraft,
+  sessionConnectionStatus,
+  sessionError,
   songModeStatusMessage,
   supportsDirectoryPicker,
+  onClearSessionError,
   onClearSongModeStatusMessage,
+  onJoinSessionFromPrompt,
 }: DrumpadControllerOverlaysProps) => {
+  const [isJoinPromptExpanded, setIsJoinPromptExpanded] = useState(false);
+  const [joinSessionIdDraft, setJoinSessionIdDraft] = useState("");
+  const [joinUsernameDraft, setJoinUsernameDraft] = useState("");
+  const [isJoinSessionPending, setIsJoinSessionPending] = useState(false);
+
+  const runPromptJoinAction = useCallback(async () => {
+    const normalizedSessionId = joinSessionIdDraft.trim();
+    const normalizedUserName = joinUsernameDraft.trim();
+    if (!normalizedSessionId || !normalizedUserName) {
+      return;
+    }
+
+    setIsJoinSessionPending(true);
+    onClearSessionError();
+    try {
+      await onJoinSessionFromPrompt({
+        sessionId: normalizedSessionId,
+        username: normalizedUserName,
+      });
+    } catch {
+      // Session error state is set in the collaboration hook.
+    } finally {
+      setIsJoinSessionPending(false);
+    }
+  }, [joinSessionIdDraft, joinUsernameDraft, onClearSessionError, onJoinSessionFromPrompt]);
+
   return (
     <>
       {countInBeatsRemaining !== null ? (
@@ -356,6 +387,73 @@ const DrumpadControllerOverlays = ({
                     : "Choose Folder"
                   : "Load Samples"}
               </button>
+            </div>
+            <div className="mt-3 rounded-md border border-[#b8b5aa] bg-[#ecebe6] p-3">
+              <button
+                type="button"
+                className="w-full px-4 py-2 rounded-md text-xs font-bold bg-[#515a6a] hover:bg-[#454d5b] text-[#f7f7f5] border border-[#3f4653] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                onClick={() => {
+                  setIsJoinPromptExpanded((previous) => !previous);
+                }}
+                disabled={isJoinSessionPending || sessionConnectionStatus === "connecting"}
+              >
+                Join Session
+              </button>
+              {isJoinPromptExpanded ? (
+                <div className="mt-2 space-y-2">
+                  <input
+                    type="text"
+                    value={joinSessionIdDraft}
+                    onChange={(event) => {
+                      setJoinSessionIdDraft(event.target.value);
+                      if (sessionError) {
+                        onClearSessionError();
+                      }
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") {
+                        return;
+                      }
+
+                      event.preventDefault();
+                      void runPromptJoinAction();
+                    }}
+                    placeholder="Paste session ID"
+                    className="w-full rounded-md bg-[#fbfaf6] text-[#515a6a] text-sm px-3 py-2 border border-[#a8aba5] focus:outline-none focus:ring-2 focus:ring-[#ff8c2b]"
+                  />
+                  <input
+                    type="text"
+                    value={joinUsernameDraft}
+                    onChange={(event) => {
+                      setJoinUsernameDraft(event.target.value);
+                      if (sessionError) {
+                        onClearSessionError();
+                      }
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") {
+                        return;
+                      }
+
+                      event.preventDefault();
+                      void runPromptJoinAction();
+                    }}
+                    placeholder="Enter username"
+                    className="w-full rounded-md bg-[#fbfaf6] text-[#515a6a] text-sm px-3 py-2 border border-[#a8aba5] focus:outline-none focus:ring-2 focus:ring-[#ff8c2b]"
+                  />
+                  <button
+                    type="button"
+                    className="w-full px-4 py-2 rounded-md text-xs font-bold bg-[#ff8c2b] hover:bg-[#ed7d1f] text-[#515a6a] border border-[#d66d14] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    onClick={() => {
+                      void runPromptJoinAction();
+                    }}
+                    disabled={isJoinSessionPending}
+                  >
+                    Join Session
+                  </button>
+                </div>
+              ) : null}
+              {sessionError ? <p className="mt-2 text-xs text-[#a6382f]">{sessionError}</p> : null}
             </div>
           </div>
         </div>

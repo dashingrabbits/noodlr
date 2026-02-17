@@ -2,6 +2,10 @@ import type { ChangeEvent, Dispatch, MutableRefObject, SetStateAction } from "re
 import type { SavedProject } from "../../../ProjectManager/ProjectManager.types";
 import type { SampleAsset } from "../../../../integrations/samples/sample.types";
 import type {
+  SessionConnectionStatus,
+  SessionJoinRequest,
+} from "../../hooks/session-collaboration";
+import type {
   DrumPadConfig,
   PadAssignedSamples,
   PadLoopEnabled,
@@ -71,7 +75,11 @@ export type DrumpadControllerOverlaysProps = {
   setProjectNameDraft: Dispatch<SetStateAction<string>>;
   setSampleError: Dispatch<SetStateAction<string | null>>;
   setSampleRootDirDraft: Dispatch<SetStateAction<string>>;
+  sessionConnectionStatus: SessionConnectionStatus;
+  sessionError: string | null;
   songModeStatusMessage: string;
   supportsDirectoryPicker: boolean;
+  onClearSessionError: () => void;
   onClearSongModeStatusMessage: () => void;
+  onJoinSessionFromPrompt: (input: SessionJoinRequest) => Promise<void>;
 };
