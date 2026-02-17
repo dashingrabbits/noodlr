@@ -48,4 +48,5 @@ export interface KitManagerProps {
   onLoadKit: (kitId: string) => void;
   onExportKit: () => Promise<void> | void;
   onImportKit: (file: File) => Promise<void> | void;
+  embedded?: boolean;
 }

@@ -12,7 +12,14 @@ import {
 } from "./KitManager.styles";
 import { KIT_NAME_MAX_LENGTH, sanitizeKitName } from "./KitManager.utilities";
 
-const KitManager = ({ kits, onSaveKit, onLoadKit, onExportKit, onImportKit }: KitManagerProps) => {
+const KitManager = ({
+  kits,
+  onSaveKit,
+  onLoadKit,
+  onExportKit,
+  onImportKit,
+  embedded = false,
+}: KitManagerProps) => {
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
   const [kitNameDraft, setKitNameDraft] = useState("");
@@ -74,8 +81,14 @@ const KitManager = ({ kits, onSaveKit, onLoadKit, onExportKit, onImportKit }: Ki
 
   return (
     <>
-      <div className={containerClassName}>
-        <div className="flex items-center justify-between gap-3">
+      <div className={embedded ? "min-w-0" : containerClassName}>
+        <div
+          className={
+            embedded
+              ? "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+              : "flex items-center justify-between gap-3"
+          }
+        >
           <div>
             <h3 className="text-[#515a6a] text-sm font-extrabold tracking-wide">KITS</h3>
             <p className="text-xs text-[#575757]">

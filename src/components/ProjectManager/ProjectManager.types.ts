@@ -1,4 +1,6 @@
 import type {
+  PadGroupId,
+  PadGroupsState,
   PadLoopEnabled,
   PadNames,
   PadPolyphony,
@@ -16,6 +18,8 @@ import type { SampleMetadataOverrides } from "../../integrations/samples/sample.
 
 export interface ProjectState {
   masterVolume: number;
+  activePadGroupId?: PadGroupId;
+  padGroups?: PadGroupsState;
   padVolumes: PadVolumes;
   padNames: PadNames;
   padPolyphony: PadPolyphony;

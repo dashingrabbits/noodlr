@@ -401,7 +401,12 @@ const StepSequencer = ({
                           );
                         }}
                         onMouseUp={endDragSelection}
-                        className={getStepCellClassName(isEnabled, isCurrentStep, isPlaying)}
+                        className={getStepCellClassName(
+                          isEnabled,
+                          isCurrentStep,
+                          isPlaying,
+                          stepIndex
+                        )}
                         aria-label={`Pad ${row.padLabel} step ${stepIndex + 1}${
                           stepOctaveLabel ? ` octave ${stepOctaveLabel}` : ""
                         }`}
@@ -417,7 +422,7 @@ const StepSequencer = ({
                           </span>
                         ) : null}
                         <span
-                          className={`hidden sm:inline text-[8px] font-semibold ${
+                          className={`hidden sm:inline text-[9px] font-semibold ${
                             isEnabled || (isCurrentStep && isPlaying)
                               ? "text-[#515a6a]/85"
                               : "text-[#515a6a]/70"

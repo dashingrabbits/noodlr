@@ -8,6 +8,7 @@ export type DrumPadConfig = {
 };
 
 export type DrumPad = DrumPadConfig;
+export type PadGroupId = 1 | 2 | 3 | 4;
 export type PadVolumes = Record<number, number>;
 export type PadNames = Record<number, string>;
 export type PadSampleIds = Record<number, string>;
@@ -37,3 +38,20 @@ export interface SequencerPattern {
   padStepOctaves: PadStepOctaves;
   padStepLength: PadStepLength;
 }
+
+export interface PadGroupState {
+  padVolumes: PadVolumes;
+  padNames: PadNames;
+  padPolyphony: PadPolyphony;
+  padLoopEnabled: PadLoopEnabled;
+  padRowMuted: PadRowMuted;
+  padSampleIds: PadSampleIds;
+  padSampleSettings: PadSampleSettingsMap;
+  padStepSequence: PadStepSequence;
+  padStepOctaves: PadStepOctaves;
+  padStepLength: PadStepLength;
+  sequencerPatterns: SequencerPattern[];
+  activePatternId: string;
+}
+
+export type PadGroupsState = Record<PadGroupId, PadGroupState>;

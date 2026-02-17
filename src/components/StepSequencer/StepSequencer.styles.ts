@@ -53,19 +53,38 @@ export const patternSelectClassName =
 export const getStepCellClassName = (
   isEnabled: boolean,
   isCurrentStep: boolean,
-  isPlaying: boolean
+  isPlaying: boolean,
+  stepIndex: number
 ): string => {
+  const isAltFourStepBlock = Math.floor(stepIndex / 4) % 2 === 1;
+
   if (isEnabled && isCurrentStep && isPlaying) {
-    return `${stepCellClassName} bg-[#ff8c2b] border-[#cc6e20] shadow-[0_0_0_2px_rgba(255,140,43,0.28)]`;
+    return `${stepCellClassName} ${
+      isAltFourStepBlock
+        ? "bg-[#ffb257] border-[#d98934]"
+        : "bg-[#ff8c2b] border-[#cc6e20]"
+    } shadow-[0_0_0_2px_rgba(255,140,43,0.28)]`;
   }
 
   if (isEnabled) {
-    return `${stepCellClassName} bg-[#ffa14f] border-[#d67e2d] hover:bg-[#ff9540]`;
+    return `${stepCellClassName} ${
+      isAltFourStepBlock
+        ? "bg-[#ffc986] border-[#dc9d57] hover:bg-[#ffbf73]"
+        : "bg-[#ffa14f] border-[#d67e2d] hover:bg-[#ff9540]"
+    }`;
   }
 
   if (isCurrentStep && isPlaying) {
-    return `${stepCellClassName} bg-[#c8cbc4] border-[#8f938f]`;
+    return `${stepCellClassName} ${
+      isAltFourStepBlock
+        ? "bg-[#aab2a5] border-[#7b8478]"
+        : "bg-[#c8cbc4] border-[#8f938f]"
+    }`;
   }
 
-  return `${stepCellClassName} bg-[#d7d9d3] border-[#b0b4ad] hover:bg-[#c8cbc4]`;
+  return `${stepCellClassName} ${
+    isAltFourStepBlock
+      ? "bg-[#bcc1b6] border-[#8f978b] hover:bg-[#aeb5a9]"
+      : "bg-[#d9dbd5] border-[#b0b4ad] hover:bg-[#c9cdc6]"
+  }`;
 };

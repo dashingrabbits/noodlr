@@ -27,6 +27,9 @@ import { sanitizePadName } from "../Drumpad/Drumpad.utilities";
 import { contentClassName, layoutClassName, pageClassName } from "./DrumpadController.styles";
 import type {
   PadAssignedSamples,
+  PadGroupId,
+  PadGroupState,
+  PadGroupsState,
   PadLoopEnabled,
   PadNames,
   PadPolyphony,
@@ -128,11 +131,14 @@ const TRANSPORT_SCHEDULE_AHEAD_TIME_SECONDS = 0.1;
 const VOICE_STOP_FADE_SECONDS = 0.005;
 const IMPORTED_SAMPLE_ID_PREFIX = "imported";
 const IMPORTED_PROJECT_SAMPLE_ID_PREFIX = "imported-project";
+const DEMO_KIT_IMPORTED_ID_PREFIX = "demo-kit";
 const PROJECT_ARCHIVE_ACCEPT = ".zip,.noodlr-project.zip,application/zip";
 const KIT_ARCHIVE_ACCEPT = ".zip,.noodlr-kit.zip,application/zip";
 const DEMO_KIT_ARCHIVE_URL = "/demo/Kit-2026-02-16T17-48-37.noodlr-kit.zip";
 const DEMO_KIT_ARCHIVE_FILE_NAME = "Kit-2026-02-16T17-48-37.noodlr-kit.zip";
 const DEMO_KIT_AUTOLOAD_STORAGE_KEY = "noodlr.demoKitAutoLoaded.v1";
+const PAD_GROUP_IDS: PadGroupId[] = [1, 2, 3, 4];
+const DEFAULT_ACTIVE_PAD_GROUP_ID: PadGroupId = 1;
 const EMPTY_STEP_OCTAVE_SEQUENCE = Array.from({ length: STEPS_IN_SEQUENCE }, () => 0);
 const RECORD_COUNT_IN_BEATS = 4;
 
@@ -186,6 +192,114 @@ const createDefaultSequencerPattern = (): SequencerPattern => {
     padStepOctaves: createInitialPadStepOctaves(DRUM_PADS, STEPS_IN_SEQUENCE),
     padStepLength: createInitialPadStepLength(DRUM_PADS, DEFAULT_ROW_STEP_LENGTH),
   };
+};
+
+const cloneSequencerPattern = (pattern: SequencerPattern): SequencerPattern => {
+  return {
+    ...pattern,
+    padStepSequence: clonePadStepSequence(pattern.padStepSequence),
+    padStepOctaves: clonePadStepOctaves(pattern.padStepOctaves),
+    padStepLength: clonePadStepLength(pattern.padStepLength),
+  };
+};
+
+const cloneSequencerPatterns = (patterns: SequencerPattern[]): SequencerPattern[] => {
+  return patterns.map((pattern) => cloneSequencerPattern(pattern));
+};
+
+const createDefaultPadGroupState = (): PadGroupState => {
+  const initialPattern = createDefaultSequencerPattern();
+  return {
+    padVolumes: createInitialPadVolumes(DRUM_PADS),
+    padNames: createInitialPadNames(DRUM_PADS),
+    padPolyphony: createInitialPadPolyphony(DRUM_PADS),
+    padLoopEnabled: createInitialPadLoopEnabled(DRUM_PADS),
+    padRowMuted: createInitialPadRowMuted(DRUM_PADS),
+    padSampleIds: {},
+    padSampleSettings: createInitialPadSampleSettings(DRUM_PADS),
+    padStepSequence: clonePadStepSequence(initialPattern.padStepSequence),
+    padStepOctaves: clonePadStepOctaves(initialPattern.padStepOctaves),
+    padStepLength: clonePadStepLength(initialPattern.padStepLength),
+    sequencerPatterns: [cloneSequencerPattern(initialPattern)],
+    activePatternId: initialPattern.id,
+  };
+};
+
+const clonePadGroupState = (padGroupState: PadGroupState): PadGroupState => {
+  return {
+    padVolumes: { ...padGroupState.padVolumes },
+    padNames: { ...padGroupState.padNames },
+    padPolyphony: { ...padGroupState.padPolyphony },
+    padLoopEnabled: { ...padGroupState.padLoopEnabled },
+    padRowMuted: { ...padGroupState.padRowMuted },
+    padSampleIds: { ...padGroupState.padSampleIds },
+    padSampleSettings: Object.fromEntries(
+      Object.entries(padGroupState.padSampleSettings).map(([padId, settings]) => [
+        Number(padId),
+        normalizePadSampleSettings(settings),
+      ])
+    ) as PadSampleSettingsMap,
+    padStepSequence: clonePadStepSequence(padGroupState.padStepSequence),
+    padStepOctaves: clonePadStepOctaves(padGroupState.padStepOctaves),
+    padStepLength: clonePadStepLength(padGroupState.padStepLength),
+    sequencerPatterns: cloneSequencerPatterns(padGroupState.sequencerPatterns),
+    activePatternId: padGroupState.activePatternId,
+  };
+};
+
+const createInitialPadGroupsState = (): PadGroupsState => {
+  return PAD_GROUP_IDS.reduce((groupsState, groupId) => {
+    groupsState[groupId] = createDefaultPadGroupState();
+    return groupsState;
+  }, {} as PadGroupsState);
+};
+
+const clonePadGroupsState = (padGroupsState: PadGroupsState): PadGroupsState => {
+  return PAD_GROUP_IDS.reduce((groupsState, groupId) => {
+    groupsState[groupId] = clonePadGroupState(padGroupsState[groupId]);
+    return groupsState;
+  }, {} as PadGroupsState);
+};
+
+const isPadGroupId = (value: unknown): value is PadGroupId => {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    PAD_GROUP_IDS.includes(value as PadGroupId)
+  );
+};
+
+const isDemoKitImportedSampleId = (sampleId: string): boolean => {
+  return sampleId.startsWith(`${IMPORTED_SAMPLE_ID_PREFIX}:${DEMO_KIT_IMPORTED_ID_PREFIX}:`);
+};
+
+const collectSampleIdsFromPadSampleIds = (padSampleIds: PadSampleIds | undefined): string[] => {
+  if (!padSampleIds) {
+    return [];
+  }
+
+  return Object.values(padSampleIds)
+    .map((sampleId) => sampleId.trim())
+    .filter((sampleId) => Boolean(sampleId));
+};
+
+const collectProjectReferencedSampleIds = (projectState: Partial<ProjectState>): string[] => {
+  const sampleIds = new Set<string>();
+
+  if (projectState.padGroups) {
+    PAD_GROUP_IDS.forEach((groupId) => {
+      const groupState = projectState.padGroups?.[groupId];
+      collectSampleIdsFromPadSampleIds(groupState?.padSampleIds).forEach((sampleId) =>
+        sampleIds.add(sampleId)
+      );
+    });
+  }
+
+  collectSampleIdsFromPadSampleIds(projectState.padSampleIds).forEach((sampleId) =>
+    sampleIds.add(sampleId)
+  );
+
+  return Array.from(sampleIds);
 };
 
 const createDuplicatePatternName = (sourcePatternName: string, existingNames: string[]): string => {
@@ -244,29 +358,57 @@ const markDemoKitAutoLoaded = () => {
 
 const DrumpadController = () => {
   const getInitialSampleRootDir = () => readPersistedSampleSoundsDir();
-  const initialPattern = useMemo(() => createDefaultSequencerPattern(), []);
+  const initialPadGroupsState = useMemo(() => createInitialPadGroupsState(), []);
+  const initialActivePadGroupState = initialPadGroupsState[DEFAULT_ACTIVE_PAD_GROUP_ID];
   const [isPlaying, setIsPlaying] = useState(false);
   const [masterVolume, setMasterVolume] = useState(DEFAULT_PAD_VOLUME);
-  const [padVolumes, setPadVolumes] = useState<PadVolumes>({});
-  const [padNames, setPadNames] = useState<PadNames>({});
-  const [padPolyphony, setPadPolyphony] = useState<PadPolyphony>({});
-  const [padLoopEnabled, setPadLoopEnabled] = useState<PadLoopEnabled>({});
-  const [padRowMuted, setPadRowMuted] = useState<PadRowMuted>({});
-  const [padSampleSettings, setPadSampleSettings] = useState<PadSampleSettingsMap>({});
+  const [activePadGroupId, setActivePadGroupId] = useState<PadGroupId>(
+    DEFAULT_ACTIVE_PAD_GROUP_ID
+  );
+  const [padGroupsState, setPadGroupsState] = useState<PadGroupsState>(() =>
+    clonePadGroupsState(initialPadGroupsState)
+  );
+  const [padVolumes, setPadVolumes] = useState<PadVolumes>(() => ({
+    ...initialActivePadGroupState.padVolumes,
+  }));
+  const [padNames, setPadNames] = useState<PadNames>(() => ({
+    ...initialActivePadGroupState.padNames,
+  }));
+  const [padPolyphony, setPadPolyphony] = useState<PadPolyphony>(() => ({
+    ...initialActivePadGroupState.padPolyphony,
+  }));
+  const [padLoopEnabled, setPadLoopEnabled] = useState<PadLoopEnabled>(() => ({
+    ...initialActivePadGroupState.padLoopEnabled,
+  }));
+  const [padRowMuted, setPadRowMuted] = useState<PadRowMuted>(() => ({
+    ...initialActivePadGroupState.padRowMuted,
+  }));
+  const [padSampleSettings, setPadSampleSettings] = useState<PadSampleSettingsMap>(() =>
+    Object.fromEntries(
+      Object.entries(initialActivePadGroupState.padSampleSettings).map(([padId, settings]) => [
+        Number(padId),
+        normalizePadSampleSettings(settings),
+      ])
+    ) as PadSampleSettingsMap
+  );
   const [padStepSequence, setPadStepSequence] = useState<PadStepSequence>(() =>
-    clonePadStepSequence(initialPattern.padStepSequence)
+    clonePadStepSequence(initialActivePadGroupState.padStepSequence)
   );
   const [padStepOctaves, setPadStepOctaves] = useState<PadStepOctaves>(() =>
-    clonePadStepOctaves(initialPattern.padStepOctaves)
+    clonePadStepOctaves(initialActivePadGroupState.padStepOctaves)
   );
   const [padStepLength, setPadStepLength] = useState<PadStepLength>(() =>
-    clonePadStepLength(initialPattern.padStepLength)
+    clonePadStepLength(initialActivePadGroupState.padStepLength)
   );
-  const [sequencerPatterns, setSequencerPatterns] = useState<SequencerPattern[]>(() => [
-    initialPattern,
-  ]);
-  const [activePatternId, setActivePatternId] = useState<string>(() => initialPattern.id);
-  const [padSampleIds, setPadSampleIds] = useState<PadSampleIds>({});
+  const [sequencerPatterns, setSequencerPatterns] = useState<SequencerPattern[]>(() =>
+    cloneSequencerPatterns(initialActivePadGroupState.sequencerPatterns)
+  );
+  const [activePatternId, setActivePatternId] = useState<string>(
+    () => initialActivePadGroupState.activePatternId
+  );
+  const [padSampleIds, setPadSampleIds] = useState<PadSampleIds>(() => ({
+    ...initialActivePadGroupState.padSampleIds,
+  }));
   const [currentStep, setCurrentStep] = useState(0);
   const [isRecording, setIsRecording] = useState(false);
   const [isMetronomeEnabled, setIsMetronomeEnabled] = useState(false);
@@ -470,18 +612,6 @@ const DrumpadController = () => {
   isMetronomeEnabledRef.current = isMetronomeEnabled;
 
   useEffect(() => {
-    setPadVolumes(createInitialPadVolumes(DRUM_PADS));
-    setPadNames(createInitialPadNames(DRUM_PADS));
-    setPadPolyphony(createInitialPadPolyphony(DRUM_PADS));
-    setPadLoopEnabled(createInitialPadLoopEnabled(DRUM_PADS));
-    setPadRowMuted(createInitialPadRowMuted(DRUM_PADS));
-    setPadSampleSettings(createInitialPadSampleSettings(DRUM_PADS));
-    setPadStepSequence(createInitialPadStepSequence(DRUM_PADS, STEPS_IN_SEQUENCE));
-    setPadStepOctaves(createInitialPadStepOctaves(DRUM_PADS, STEPS_IN_SEQUENCE));
-    setPadStepLength(createInitialPadStepLength(DRUM_PADS, DEFAULT_ROW_STEP_LENGTH));
-  }, []);
-
-  useEffect(() => {
     if (!activePatternId) {
       return;
     }
@@ -541,9 +671,8 @@ const DrumpadController = () => {
     normalizePadSampleSettings,
   ]);
 
-  const buildProjectStateSnapshot = useCallback((): ProjectState => {
+  const buildPadGroupStateSnapshot = useCallback((): PadGroupState => {
     return {
-      masterVolume,
       padVolumes: { ...padVolumes },
       padNames: { ...padNames },
       padPolyphony: { ...padPolyphony },
@@ -559,21 +688,11 @@ const DrumpadController = () => {
       padStepSequence: clonePadStepSequence(padStepSequence),
       padStepOctaves: clonePadStepOctaves(padStepOctaves),
       padStepLength: clonePadStepLength(padStepLength),
-      sequencerPatterns: sequencerPatterns.map((pattern) => ({
-        ...pattern,
-        padStepSequence: clonePadStepSequence(pattern.padStepSequence),
-        padStepOctaves: clonePadStepOctaves(pattern.padStepOctaves),
-        padStepLength: clonePadStepLength(pattern.padStepLength),
-      })),
+      sequencerPatterns: cloneSequencerPatterns(sequencerPatterns),
       activePatternId,
-      sequencerBpm,
-      sequencerClockStepLength,
-      isMetronomeEnabled,
     };
   }, [
     activePatternId,
-    isMetronomeEnabled,
-    masterVolume,
     padLoopEnabled,
     padNames,
     padPolyphony,
@@ -584,10 +703,56 @@ const DrumpadController = () => {
     padStepOctaves,
     padStepSequence,
     padVolumes,
+    normalizePadSampleSettings,
+    sequencerPatterns,
+  ]);
+
+  const buildProjectStateSnapshot = useCallback((): ProjectState => {
+    const currentPadGroupSnapshot = buildPadGroupStateSnapshot();
+    const nextPadGroups = PAD_GROUP_IDS.reduce((groupsState, groupId) => {
+      const sourceGroupState =
+        groupId === activePadGroupId
+          ? currentPadGroupSnapshot
+          : padGroupsState[groupId] ?? createDefaultPadGroupState();
+      groupsState[groupId] = clonePadGroupState(sourceGroupState);
+      return groupsState;
+    }, {} as PadGroupsState);
+    const activePadGroupState = nextPadGroups[activePadGroupId];
+
+    return {
+      masterVolume,
+      activePadGroupId,
+      padGroups: nextPadGroups,
+      padVolumes: { ...activePadGroupState.padVolumes },
+      padNames: { ...activePadGroupState.padNames },
+      padPolyphony: { ...activePadGroupState.padPolyphony },
+      padLoopEnabled: { ...activePadGroupState.padLoopEnabled },
+      padRowMuted: { ...activePadGroupState.padRowMuted },
+      padSampleIds: { ...activePadGroupState.padSampleIds },
+      padSampleSettings: Object.fromEntries(
+        DRUM_PADS.map((pad) => [
+          pad.id,
+          normalizePadSampleSettings(activePadGroupState.padSampleSettings[pad.id]),
+        ])
+      ) as PadSampleSettingsMap,
+      padStepSequence: clonePadStepSequence(activePadGroupState.padStepSequence),
+      padStepOctaves: clonePadStepOctaves(activePadGroupState.padStepOctaves),
+      padStepLength: clonePadStepLength(activePadGroupState.padStepLength),
+      sequencerPatterns: cloneSequencerPatterns(activePadGroupState.sequencerPatterns),
+      activePatternId: activePadGroupState.activePatternId,
+      sequencerBpm,
+      sequencerClockStepLength,
+      isMetronomeEnabled,
+    };
+  }, [
+    activePadGroupId,
+    buildPadGroupStateSnapshot,
+    isMetronomeEnabled,
+    masterVolume,
+    normalizePadSampleSettings,
+    padGroupsState,
     sequencerBpm,
     sequencerClockStepLength,
-    sequencerPatterns,
-    normalizePadSampleSettings,
   ]);
 
   const normalizePadStepSequence = useCallback((candidate: PadStepSequence): PadStepSequence => {
@@ -691,6 +856,90 @@ const DrumpadController = () => {
       return normalizedPatterns;
     },
     [normalizePadStepLength, normalizePadStepOctaves, normalizePadStepSequence]
+  );
+
+  const normalizePadGroupState = useCallback(
+    (candidatePadGroupState?: Partial<PadGroupState>): PadGroupState => {
+      const defaultsPadVolumes = createInitialPadVolumes(DRUM_PADS);
+      const defaultsPadNames = createInitialPadNames(DRUM_PADS);
+      const defaultsPadPolyphony = createInitialPadPolyphony(DRUM_PADS);
+      const defaultsPadLoopEnabled = createInitialPadLoopEnabled(DRUM_PADS);
+      const defaultsPadRowMuted = createInitialPadRowMuted(DRUM_PADS);
+      const defaultsPadSampleSettings = createInitialPadSampleSettings(DRUM_PADS);
+      const defaultsPadStepSequence = createInitialPadStepSequence(DRUM_PADS, STEPS_IN_SEQUENCE);
+      const defaultsPadStepOctaves = createInitialPadStepOctaves(DRUM_PADS, STEPS_IN_SEQUENCE);
+      const defaultsPadStepLength = createInitialPadStepLength(
+        DRUM_PADS,
+        DEFAULT_ROW_STEP_LENGTH
+      );
+      const nextPadSampleIds = {
+        ...(candidatePadGroupState?.padSampleIds ?? {}),
+      } as PadSampleIds;
+
+      const normalizedPatterns = normalizeSequencerPatterns(
+        candidatePadGroupState?.sequencerPatterns
+      );
+      const fallbackPattern: SequencerPattern = {
+        id: createSavedKitId(),
+        name: "Pattern 1",
+        padStepSequence: normalizePadStepSequence({
+          ...defaultsPadStepSequence,
+          ...(candidatePadGroupState?.padStepSequence ?? {}),
+        }),
+        padStepOctaves: normalizePadStepOctaves({
+          ...defaultsPadStepOctaves,
+          ...(candidatePadGroupState?.padStepOctaves ?? {}),
+        }),
+        padStepLength: normalizePadStepLength({
+          ...defaultsPadStepLength,
+          ...(candidatePadGroupState?.padStepLength ?? {}),
+        }),
+      };
+      const nextPatterns = normalizedPatterns.length > 0 ? normalizedPatterns : [fallbackPattern];
+      const nextActivePattern =
+        nextPatterns.find((pattern) => pattern.id === candidatePadGroupState?.activePatternId) ??
+        nextPatterns[0];
+
+      return {
+        padVolumes: {
+          ...defaultsPadVolumes,
+          ...(candidatePadGroupState?.padVolumes ?? {}),
+        },
+        padNames: {
+          ...defaultsPadNames,
+          ...(candidatePadGroupState?.padNames ?? {}),
+        },
+        padPolyphony: {
+          ...defaultsPadPolyphony,
+          ...(candidatePadGroupState?.padPolyphony ?? {}),
+        },
+        padLoopEnabled: {
+          ...defaultsPadLoopEnabled,
+          ...(candidatePadGroupState?.padLoopEnabled ?? {}),
+        },
+        padRowMuted: {
+          ...defaultsPadRowMuted,
+          ...(candidatePadGroupState?.padRowMuted ?? {}),
+        },
+        padSampleIds: nextPadSampleIds,
+        padSampleSettings: normalizePadSampleSettingsMap({
+          ...defaultsPadSampleSettings,
+          ...(candidatePadGroupState?.padSampleSettings ?? {}),
+        }),
+        padStepSequence: clonePadStepSequence(nextActivePattern.padStepSequence),
+        padStepOctaves: clonePadStepOctaves(nextActivePattern.padStepOctaves),
+        padStepLength: clonePadStepLength(nextActivePattern.padStepLength),
+        sequencerPatterns: cloneSequencerPatterns(nextPatterns),
+        activePatternId: nextActivePattern.id,
+      };
+    },
+    [
+      normalizePadSampleSettingsMap,
+      normalizePadStepLength,
+      normalizePadStepOctaves,
+      normalizePadStepSequence,
+      normalizeSequencerPatterns,
+    ]
   );
 
   const getAudioContext = useCallback((): AudioContext | null => {
@@ -1651,6 +1900,102 @@ const DrumpadController = () => {
     [sequencerPatterns]
   );
 
+  const warmAssignedSamples = useCallback(
+    (sampleIds: PadSampleIds) => {
+      const uniqueSampleIds = new Set(
+        Object.values(sampleIds)
+          .map((sampleId) => sampleId.trim())
+          .filter((sampleId) => Boolean(sampleId))
+      );
+
+      uniqueSampleIds.forEach((sampleId) => {
+        const sample = sampleAssetsById.get(sampleId);
+        if (!sample) {
+          return;
+        }
+
+        void ensureSampleBuffer(sample).catch(() => {
+          // Ignore warmup failures; manual trigger can retry.
+        });
+      });
+    },
+    [ensureSampleBuffer, sampleAssetsById]
+  );
+
+  const applyPadGroupState = useCallback(
+    (candidatePadGroupState?: Partial<PadGroupState>): PadGroupState => {
+      const normalizedPadGroupState = normalizePadGroupState(candidatePadGroupState);
+      setPadVolumes({ ...normalizedPadGroupState.padVolumes });
+      setPadNames({ ...normalizedPadGroupState.padNames });
+      setPadPolyphony({ ...normalizedPadGroupState.padPolyphony });
+      setPadLoopEnabled({ ...normalizedPadGroupState.padLoopEnabled });
+      setPadRowMuted({ ...normalizedPadGroupState.padRowMuted });
+      setPadSampleIds({ ...normalizedPadGroupState.padSampleIds });
+      setPadSampleSettings(
+        Object.fromEntries(
+          Object.entries(normalizedPadGroupState.padSampleSettings).map(([padId, settings]) => [
+            Number(padId),
+            normalizePadSampleSettings(settings),
+          ])
+        ) as PadSampleSettingsMap
+      );
+      setSequencerPatterns(cloneSequencerPatterns(normalizedPadGroupState.sequencerPatterns));
+      setActivePatternId(normalizedPadGroupState.activePatternId);
+      setPadStepSequence(clonePadStepSequence(normalizedPadGroupState.padStepSequence));
+      setPadStepOctaves(clonePadStepOctaves(normalizedPadGroupState.padStepOctaves));
+      setPadStepLength(clonePadStepLength(normalizedPadGroupState.padStepLength));
+      warmAssignedSamples(normalizedPadGroupState.padSampleIds);
+
+      return normalizedPadGroupState;
+    },
+    [normalizePadGroupState, warmAssignedSamples]
+  );
+
+  const handleSelectPadGroup = useCallback(
+    (groupId: PadGroupId) => {
+      if (groupId === activePadGroupId) {
+        return;
+      }
+
+      cancelCountIn();
+      stopAllLoopBufferSources();
+      stopAllOneShotBufferSources();
+      stopAllMetronomeSources();
+      stopPreviewBufferSource();
+      clearScheduledTickVisualTimeouts();
+      setIsPlaying(false);
+      setIsRecording(false);
+      currentTickRef.current = 0;
+      setCurrentStep(0);
+      setEditingPadId(null);
+      setSampleAssignPadId(null);
+
+      const currentPadGroupSnapshot = buildPadGroupStateSnapshot();
+      const nextPadGroups = {
+        ...padGroupsState,
+        [activePadGroupId]: clonePadGroupState(currentPadGroupSnapshot),
+      } as PadGroupsState;
+      const targetPadGroup = nextPadGroups[groupId] ?? createDefaultPadGroupState();
+      nextPadGroups[groupId] = clonePadGroupState(targetPadGroup);
+
+      setPadGroupsState(nextPadGroups);
+      setActivePadGroupId(groupId);
+      applyPadGroupState(targetPadGroup);
+    },
+    [
+      activePadGroupId,
+      applyPadGroupState,
+      buildPadGroupStateSnapshot,
+      cancelCountIn,
+      clearScheduledTickVisualTimeouts,
+      padGroupsState,
+      stopAllLoopBufferSources,
+      stopAllMetronomeSources,
+      stopAllOneShotBufferSources,
+      stopPreviewBufferSource,
+    ]
+  );
+
   const handleSequencerStepToggle = useCallback((padId: number, stepIndex: number) => {
     if (stepIndex < 0 || stepIndex >= STEPS_IN_SEQUENCE) {
       return;
@@ -2034,16 +2379,8 @@ const DrumpadController = () => {
   }, [cancelCountIn, isRecording]);
 
   const handleClearSequence = () => {
-    const defaultPattern = createDefaultSequencerPattern();
-    const defaultPadVolumes = createInitialPadVolumes(DRUM_PADS);
-    const defaultPadNames = createInitialPadNames(DRUM_PADS);
-    const defaultPadPolyphony = createInitialPadPolyphony(DRUM_PADS);
-    const defaultPadLoopEnabled = createInitialPadLoopEnabled(DRUM_PADS);
-    const defaultPadRowMuted = createInitialPadRowMuted(DRUM_PADS);
-    const defaultPadSampleSettings = createInitialPadSampleSettings(DRUM_PADS);
-    const defaultPadStepSequence = clonePadStepSequence(defaultPattern.padStepSequence);
-    const defaultPadStepOctaves = clonePadStepOctaves(defaultPattern.padStepOctaves);
-    const defaultPadStepLength = clonePadStepLength(defaultPattern.padStepLength);
+    const defaultPadGroups = createInitialPadGroupsState();
+    const defaultActiveGroup = defaultPadGroups[DEFAULT_ACTIVE_PAD_GROUP_ID];
 
     cancelCountIn();
     stopAllLoopBufferSources();
@@ -2056,18 +2393,27 @@ const DrumpadController = () => {
     setIsRecording(false);
     setIsMetronomeEnabled(false);
     setMasterVolume(DEFAULT_PAD_VOLUME);
-    setPadVolumes(defaultPadVolumes);
-    setPadNames(defaultPadNames);
-    setPadPolyphony(defaultPadPolyphony);
-    setPadLoopEnabled(defaultPadLoopEnabled);
-    setPadRowMuted(defaultPadRowMuted);
-    setPadSampleIds({});
-    setPadSampleSettings(defaultPadSampleSettings);
-    setSequencerPatterns([defaultPattern]);
-    setActivePatternId(defaultPattern.id);
-    setPadStepSequence(defaultPadStepSequence);
-    setPadStepOctaves(defaultPadStepOctaves);
-    setPadStepLength(defaultPadStepLength);
+    setActivePadGroupId(DEFAULT_ACTIVE_PAD_GROUP_ID);
+    setPadGroupsState(defaultPadGroups);
+    setPadVolumes({ ...defaultActiveGroup.padVolumes });
+    setPadNames({ ...defaultActiveGroup.padNames });
+    setPadPolyphony({ ...defaultActiveGroup.padPolyphony });
+    setPadLoopEnabled({ ...defaultActiveGroup.padLoopEnabled });
+    setPadRowMuted({ ...defaultActiveGroup.padRowMuted });
+    setPadSampleIds({ ...defaultActiveGroup.padSampleIds });
+    setPadSampleSettings(
+      Object.fromEntries(
+        Object.entries(defaultActiveGroup.padSampleSettings).map(([padId, settings]) => [
+          Number(padId),
+          normalizePadSampleSettings(settings),
+        ])
+      ) as PadSampleSettingsMap
+    );
+    setSequencerPatterns(cloneSequencerPatterns(defaultActiveGroup.sequencerPatterns));
+    setActivePatternId(defaultActiveGroup.activePatternId);
+    setPadStepSequence(clonePadStepSequence(defaultActiveGroup.padStepSequence));
+    setPadStepOctaves(clonePadStepOctaves(defaultActiveGroup.padStepOctaves));
+    setPadStepLength(clonePadStepLength(defaultActiveGroup.padStepLength));
     setSequencerBpm(DEFAULT_SEQUENCER_BPM);
     setSequencerClockStepLength(BASE_SEQUENCER_STEP_LENGTH);
     setSelectedProjectId("");
@@ -2078,66 +2424,58 @@ const DrumpadController = () => {
     setIsSaveProjectModalOpen(false);
   };
 
-  const warmAssignedSamples = useCallback(
-    (sampleIds: PadSampleIds) => {
-      const uniqueSampleIds = new Set(
-        Object.values(sampleIds)
-          .map((sampleId) => sampleId.trim())
-          .filter((sampleId) => Boolean(sampleId))
-      );
-
-      uniqueSampleIds.forEach((sampleId) => {
-        const sample = sampleAssetsById.get(sampleId);
-        if (!sample) {
-          return;
-        }
-
-        void ensureSampleBuffer(sample).catch(() => {
-          // Ignore warmup failures; manual trigger can retry.
-        });
-      });
-    },
-    [ensureSampleBuffer, sampleAssetsById]
-  );
+  useEffect(() => {
+    const currentPadGroupSnapshot = buildPadGroupStateSnapshot();
+    setPadGroupsState((previous) => ({
+      ...previous,
+      [activePadGroupId]: currentPadGroupSnapshot,
+    }));
+  }, [activePadGroupId, buildPadGroupStateSnapshot]);
 
   const applyDrumKitState = useCallback(
     (candidateKitState: Partial<DrumKitState>) => {
-      const defaultsPadVolumes = createInitialPadVolumes(DRUM_PADS);
-      const defaultsPadNames = createInitialPadNames(DRUM_PADS);
-      const defaultsPadPolyphony = createInitialPadPolyphony(DRUM_PADS);
-      const defaultsPadLoopEnabled = createInitialPadLoopEnabled(DRUM_PADS);
-      const defaultsPadSampleSettings = createInitialPadSampleSettings(DRUM_PADS);
-      const nextPadSampleIds = {
-        ...(candidateKitState.padSampleIds ?? {}),
-      } as PadSampleIds;
+      const currentPadGroupSnapshot = buildPadGroupStateSnapshot();
+      const nextPadGroupState = normalizePadGroupState({
+        ...currentPadGroupSnapshot,
+        padVolumes: {
+          ...currentPadGroupSnapshot.padVolumes,
+          ...(candidateKitState.padVolumes ?? {}),
+        },
+        padNames: {
+          ...currentPadGroupSnapshot.padNames,
+          ...(candidateKitState.padNames ?? {}),
+        },
+        padPolyphony: {
+          ...currentPadGroupSnapshot.padPolyphony,
+          ...(candidateKitState.padPolyphony ?? {}),
+        },
+        padLoopEnabled: {
+          ...currentPadGroupSnapshot.padLoopEnabled,
+          ...(candidateKitState.padLoopEnabled ?? {}),
+        },
+        padSampleIds: {
+          ...(candidateKitState.padSampleIds ?? {}),
+        } as PadSampleIds,
+        padSampleSettings: {
+          ...currentPadGroupSnapshot.padSampleSettings,
+          ...(candidateKitState.padSampleSettings ?? {}),
+        },
+      });
 
       stopAllLoopBufferSources();
-      setPadVolumes({
-        ...defaultsPadVolumes,
-        ...(candidateKitState.padVolumes ?? {}),
-      });
-      setPadNames({
-        ...defaultsPadNames,
-        ...(candidateKitState.padNames ?? {}),
-      });
-      setPadPolyphony({
-        ...defaultsPadPolyphony,
-        ...(candidateKitState.padPolyphony ?? {}),
-      });
-      setPadLoopEnabled({
-        ...defaultsPadLoopEnabled,
-        ...(candidateKitState.padLoopEnabled ?? {}),
-      });
-      setPadSampleIds(nextPadSampleIds);
-      setPadSampleSettings(
-        normalizePadSampleSettingsMap({
-          ...defaultsPadSampleSettings,
-          ...(candidateKitState.padSampleSettings ?? {}),
-        })
-      );
-      warmAssignedSamples(nextPadSampleIds);
+      applyPadGroupState(nextPadGroupState);
+      setPadGroupsState((previous) => ({
+        ...previous,
+        [activePadGroupId]: clonePadGroupState(nextPadGroupState),
+      }));
     },
-    [normalizePadSampleSettingsMap, stopAllLoopBufferSources, warmAssignedSamples]
+    [
+      activePadGroupId,
+      applyPadGroupState,
+      buildPadGroupStateSnapshot,
+      normalizePadGroupState,
+      stopAllLoopBufferSources,
+    ]
   );
 
   const handleSaveKit = useCallback(
@@ -2251,7 +2589,7 @@ const DrumpadController = () => {
   ]);
 
   const handleImportKit = useCallback(
-    async (archiveFile: File) => {
+    async (archiveFile: File, options?: { importedIdPrefix?: string }) => {
       const zip = await JSZip.loadAsync(archiveFile);
       const manifestZipEntry = zip.file(KIT_ARCHIVE_MANIFEST_FILE_NAME);
       if (!manifestZipEntry) {
@@ -2264,7 +2602,7 @@ const DrumpadController = () => {
       }
 
       const manifest = manifestPayload as KitArchiveManifest;
-      const importedKitId = createSavedKitId();
+      const importedKitId = options?.importedIdPrefix ?? createSavedKitId();
       const importedSampleIdMap = new Map<string, string>();
       const nextImportedAssets: SampleAsset[] = [];
 
@@ -2302,12 +2640,31 @@ const DrumpadController = () => {
         return Array.from(existingById.values());
       });
 
-      const remappedPadSampleIds = Object.fromEntries(
-        Object.entries(manifest.state.padSampleIds ?? {}).map(([padIdRaw, oldSampleId]) => {
-          const importedSampleId = importedSampleIdMap.get(String(oldSampleId));
-          return [Number(padIdRaw), importedSampleId || ""];
-        })
-      ) as PadSampleIds;
+      const remapPadSampleIds = (candidatePadSampleIds?: PadSampleIds): PadSampleIds => {
+        return Object.fromEntries(
+          Object.entries(candidatePadSampleIds ?? {}).map(([padIdRaw, oldSampleId]) => {
+            const importedSampleId = importedSampleIdMap.get(String(oldSampleId));
+            return [Number(padIdRaw), importedSampleId || ""];
+          })
+        ) as PadSampleIds;
+      };
+
+      const remappedPadSampleIds = remapPadSampleIds(manifest.state.padSampleIds);
+      const remappedPadGroups = manifest.state.padGroups
+        ? PAD_GROUP_IDS.reduce((groupsState, groupId) => {
+            const sourceGroup = manifest.state.padGroups?.[groupId];
+            if (!sourceGroup) {
+              groupsState[groupId] = createDefaultPadGroupState();
+              return groupsState;
+            }
+
+            groupsState[groupId] = {
+              ...sourceGroup,
+              padSampleIds: remapPadSampleIds(sourceGroup.padSampleIds),
+            };
+            return groupsState;
+          }, {} as PadGroupsState)
+        : undefined;
 
       const remappedMetadataOverrides = Object.fromEntries(
         Object.entries(manifest.sampleMetadataOverrides).flatMap(([oldSampleId, override]) => {
@@ -2348,7 +2705,9 @@ const DrumpadController = () => {
         type: archiveBlob.type || "application/zip",
       });
 
-      await handleImportKit(archiveFile);
+      await handleImportKit(archiveFile, {
+        importedIdPrefix: DEMO_KIT_IMPORTED_ID_PREFIX,
+      });
       markDemoKitAutoLoaded();
       return true;
     } catch (error) {
@@ -2423,47 +2782,50 @@ const DrumpadController = () => {
       candidateProjectState: Partial<ProjectState>,
       options?: { selectedProjectId?: string }
     ) => {
-      const defaultsPadVolumes = createInitialPadVolumes(DRUM_PADS);
-      const defaultsPadNames = createInitialPadNames(DRUM_PADS);
-      const defaultsPadPolyphony = createInitialPadPolyphony(DRUM_PADS);
-      const defaultsPadLoopEnabled = createInitialPadLoopEnabled(DRUM_PADS);
-      const defaultsPadRowMuted = createInitialPadRowMuted(DRUM_PADS);
-      const defaultsPadSampleSettings = createInitialPadSampleSettings(DRUM_PADS);
-      const defaultsPadStepSequence = createInitialPadStepSequence(DRUM_PADS, STEPS_IN_SEQUENCE);
-      const defaultsPadStepOctaves = createInitialPadStepOctaves(DRUM_PADS, STEPS_IN_SEQUENCE);
-      const defaultsPadStepLength = createInitialPadStepLength(
-        DRUM_PADS,
-        DEFAULT_ROW_STEP_LENGTH
-      );
-      const nextPadSampleIds = {
-        ...(candidateProjectState.padSampleIds ?? {}),
-      } as PadSampleIds;
-      const normalizedPatterns = normalizeSequencerPatterns(
-        candidateProjectState.sequencerPatterns
-      );
-      const fallbackPattern: SequencerPattern = {
-        id: createSavedKitId(),
-        name: "Pattern 1",
-        padStepSequence: normalizePadStepSequence({
-          ...defaultsPadStepSequence,
-          ...(candidateProjectState.padStepSequence ?? {}),
-        }),
-        padStepOctaves: normalizePadStepOctaves({
-          ...defaultsPadStepOctaves,
-          ...(candidateProjectState.padStepOctaves ?? {}),
-        }),
-        padStepLength: normalizePadStepLength({
-          ...defaultsPadStepLength,
-          ...(candidateProjectState.padStepLength ?? {}),
-        }),
-      };
-      const nextPatterns = normalizedPatterns.length > 0 ? normalizedPatterns : [fallbackPattern];
-      const nextActivePattern =
-        nextPatterns.find((pattern) => pattern.id === candidateProjectState.activePatternId) ??
-        nextPatterns[0];
+      const hasPadGroups =
+        Boolean(candidateProjectState.padGroups) &&
+        typeof candidateProjectState.padGroups === "object";
+
+      const nextPadGroups: PadGroupsState = PAD_GROUP_IDS.reduce((groupsState, groupId) => {
+        if (hasPadGroups) {
+          const candidateGroupState = candidateProjectState.padGroups?.[groupId];
+          groupsState[groupId] = normalizePadGroupState(candidateGroupState);
+          return groupsState;
+        }
+
+        if (groupId === DEFAULT_ACTIVE_PAD_GROUP_ID) {
+          groupsState[groupId] = normalizePadGroupState({
+            padVolumes: candidateProjectState.padVolumes,
+            padNames: candidateProjectState.padNames,
+            padPolyphony: candidateProjectState.padPolyphony,
+            padLoopEnabled: candidateProjectState.padLoopEnabled,
+            padRowMuted: candidateProjectState.padRowMuted,
+            padSampleIds: candidateProjectState.padSampleIds,
+            padSampleSettings: candidateProjectState.padSampleSettings,
+            padStepSequence: candidateProjectState.padStepSequence,
+            padStepOctaves: candidateProjectState.padStepOctaves,
+            padStepLength: candidateProjectState.padStepLength,
+            sequencerPatterns: candidateProjectState.sequencerPatterns,
+            activePatternId: candidateProjectState.activePatternId,
+          });
+          return groupsState;
+        }
+
+        groupsState[groupId] = createDefaultPadGroupState();
+        return groupsState;
+      }, {} as PadGroupsState);
+
+      const requestedActivePadGroupId = isPadGroupId(candidateProjectState.activePadGroupId)
+        ? candidateProjectState.activePadGroupId
+        : DEFAULT_ACTIVE_PAD_GROUP_ID;
+      const nextActivePadGroup =
+        nextPadGroups[requestedActivePadGroupId] ??
+        nextPadGroups[DEFAULT_ACTIVE_PAD_GROUP_ID] ??
+        createDefaultPadGroupState();
 
       cancelCountIn();
       stopAllLoopBufferSources();
+      stopAllOneShotBufferSources();
       stopAllMetronomeSources();
       currentTickRef.current = 0;
       setCurrentStep(0);
@@ -2477,39 +2839,9 @@ const DrumpadController = () => {
       setMasterVolume(
         Math.max(0, Math.min(100, Number(candidateProjectState.masterVolume ?? DEFAULT_PAD_VOLUME)))
       );
-      setPadVolumes({
-        ...defaultsPadVolumes,
-        ...(candidateProjectState.padVolumes ?? {}),
-      });
-      setPadNames({
-        ...defaultsPadNames,
-        ...(candidateProjectState.padNames ?? {}),
-      });
-      setPadPolyphony({
-        ...defaultsPadPolyphony,
-        ...(candidateProjectState.padPolyphony ?? {}),
-      });
-      setPadLoopEnabled({
-        ...defaultsPadLoopEnabled,
-        ...(candidateProjectState.padLoopEnabled ?? {}),
-      });
-      setPadRowMuted({
-        ...defaultsPadRowMuted,
-        ...(candidateProjectState.padRowMuted ?? {}),
-      });
-      setPadSampleIds(nextPadSampleIds);
-      setPadSampleSettings(
-        normalizePadSampleSettingsMap({
-          ...defaultsPadSampleSettings,
-          ...(candidateProjectState.padSampleSettings ?? {}),
-        })
-      );
-      warmAssignedSamples(nextPadSampleIds);
-      setSequencerPatterns(nextPatterns);
-      setActivePatternId(nextActivePattern.id);
-      setPadStepSequence(clonePadStepSequence(nextActivePattern.padStepSequence));
-      setPadStepOctaves(clonePadStepOctaves(nextActivePattern.padStepOctaves));
-      setPadStepLength(clonePadStepLength(nextActivePattern.padStepLength));
+      setPadGroupsState(nextPadGroups);
+      setActivePadGroupId(requestedActivePadGroupId);
+      applyPadGroupState(nextActivePadGroup);
       setSequencerBpm(
         clampSequencerBpm(Number(candidateProjectState.sequencerBpm ?? DEFAULT_SEQUENCER_BPM))
       );
@@ -2521,15 +2853,12 @@ const DrumpadController = () => {
       setIsMetronomeEnabled(Boolean(candidateProjectState.isMetronomeEnabled));
     },
     [
+      applyPadGroupState,
       cancelCountIn,
-      normalizePadStepLength,
-      normalizePadStepOctaves,
-      normalizePadSampleSettingsMap,
-      normalizePadStepSequence,
-      normalizeSequencerPatterns,
+      normalizePadGroupState,
       stopAllMetronomeSources,
       stopAllLoopBufferSources,
-      warmAssignedSamples,
+      stopAllOneShotBufferSources,
     ]
   );
 
@@ -2540,11 +2869,23 @@ const DrumpadController = () => {
         return;
       }
 
-      applyProjectState(project.state as Partial<ProjectState>, {
-        selectedProjectId: project.id,
-      });
+      void (async () => {
+        const projectState = project.state as Partial<ProjectState>;
+        const projectSampleIds = collectProjectReferencedSampleIds(projectState);
+        const hasMissingDemoKitSamples = projectSampleIds.some(
+          (sampleId) => isDemoKitImportedSampleId(sampleId) && !sampleAssetsById.has(sampleId)
+        );
+
+        if (hasMissingDemoKitSamples) {
+          await importDemoKitArchive();
+        }
+
+        applyProjectState(projectState, {
+          selectedProjectId: project.id,
+        });
+      })();
     },
-    [applyProjectState, savedProjects]
+    [applyProjectState, importDemoKitArchive, sampleAssetsById, savedProjects]
   );
 
   const handleExportProject = useCallback(async () => {
@@ -2552,13 +2893,7 @@ const DrumpadController = () => {
     const projectState = buildProjectStateSnapshot();
     const zip = new JSZip();
     const usedFileNames = new Set<string>();
-    const sampleIdsInProject = Array.from(
-      new Set(
-        Object.values(projectState.padSampleIds)
-          .map((sampleId) => sampleId.trim())
-          .filter((sampleId) => Boolean(sampleId))
-      )
-    );
+    const sampleIdsInProject = collectProjectReferencedSampleIds(projectState);
     const exportedSamples: ProjectArchiveManifest["samples"] = [];
 
     for (const sampleId of sampleIdsInProject) {
@@ -2703,6 +3038,7 @@ const DrumpadController = () => {
       const remappedProjectState = {
         ...manifest.state,
         padSampleIds: remappedPadSampleIds,
+        padGroups: remappedPadGroups,
       } as ProjectState;
       applyProjectState(remappedProjectState, {
         selectedProjectId: "",
@@ -3847,31 +4183,67 @@ const DrumpadController = () => {
               onBpmChange={handleSequencerBpmChange}
               onClockStepLengthChange={handleSequencerClockStepLengthChange}
             />
-              <KitManager
-                kits={savedKits}
-                onSaveKit={handleSaveKit}
-                onLoadKit={handleLoadKit}
-                onExportKit={handleExportKit}
-                onImportKit={handleImportKit}
-              />
-              <div className="rounded-xl border border-[#a8aba5] bg-[#efeee8]/90 px-3 py-3 text-center">
-                <div className="mt-1 text-[#5c6270] text-xs font-medium">{KEYBOARD_HINT_TEXT}</div>
-                <div className="text-[#5c6270] text-[11px] font-medium mt-2">
-                  Hold `1-9` + pad key for +0.25..+2.25 octaves, hold `Shift` + `1-9` + pad key
-                  for -0.25..-2.25 octaves.
-                </div>
-                <div className="text-[#5c6270] text-[11px] font-medium mb-2">
-                  Click toggles steps. Hold `1-9` and click a step to set transpose. Hold `Shift`
-                  + `1-9` and click for negative transpose.
-                </div>
-                <div
-                  className={`inline-flex items-center rounded-full border px-2 py-0.5 mt-2 text-[11px] font-semibold ${
-                    heldTransposeSemitoneOffset === 0
-                      ? "border-[#a8aba5] bg-[#d7d9d3] text-[#515a6a]"
-                      : "border-[#cc6e20] bg-[#ff8c2b] text-[#ffffff]"
-                  }`}
-                >
-                  Held Transpose: {heldTransposeOctaveOffsetLabel}
+              <div className="relative overflow-hidden rounded-2xl border border-[#b8b5aa] bg-[linear-gradient(165deg,rgba(247,246,241,0.97),rgba(234,232,224,0.92))] px-4 py-4 shadow-[0_14px_28px_rgba(28,28,28,0.09)] sm:px-5">
+                <div className="pointer-events-none absolute -top-20 -right-10 h-48 w-48 rounded-full bg-[#ffffff]/35 blur-2xl" />
+                <div className="relative">
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_1px_minmax(0,1fr)] lg:items-center lg:gap-6">
+                    <KitManager
+                      kits={savedKits}
+                      onSaveKit={handleSaveKit}
+                      onLoadKit={handleLoadKit}
+                      onExportKit={handleExportKit}
+                      onImportKit={handleImportKit}
+                      embedded
+                    />
+                    <div className="hidden h-16 bg-[#c2beb3] lg:block" />
+                    <div className="min-w-0">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <h3 className="text-[#515a6a] text-sm font-extrabold tracking-wide">PAD GROUP</h3>
+                          <p className="text-xs text-[#575757]">Group {activePadGroupId} active</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                        {PAD_GROUP_IDS.map((groupId) => {
+                          const isActiveGroup = activePadGroupId === groupId;
+                          return (
+                            <button
+                              key={groupId}
+                              type="button"
+                              className={`px-4 py-2 rounded-md text-xs font-bold border transition-colors ${
+                                isActiveGroup
+                                  ? "border-[#cc6e20] bg-[#ee8d3d] text-white"
+                                  : "border-[#a8aba5] bg-[#d7d9d3] text-[#515a6a] hover:bg-[#c8cbc2]"
+                              }`}
+                              onClick={() => handleSelectPadGroup(groupId)}
+                            >
+                              Group {groupId}
+                            </button>
+                          );
+                        })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-4 border-t border-[#c2beb3] pt-4 text-center">
+                    <div className="text-[#5c6270] text-xs font-semibold">{KEYBOARD_HINT_TEXT}</div>
+                    <div className="text-[#5c6270] text-[11px] font-medium mt-2">
+                      Hold `1-9` + pad key for +0.25..+2.25 octaves, hold `Shift` + `1-9` + pad
+                      key for -0.25..-2.25 octaves.
+                    </div>
+                    <div className="text-[#5c6270] text-[11px] font-medium mb-2">
+                      Click toggles steps. Hold `1-9` and click a step to set transpose. Hold
+                      `Shift` + `1-9` and click for negative transpose.
+                    </div>
+                    <div
+                      className={`inline-flex items-center rounded-full border px-3 py-0.5 mt-2 text-[11px] font-semibold ${
+                        heldTransposeSemitoneOffset === 0
+                          ? "border-[#a8aba5] bg-[#d7d9d3] text-[#515a6a]"
+                          : "border-[#cc6e20] bg-[#ff8c2b] text-[#ffffff]"
+                      }`}
+                    >
+                      Held Transpose: {heldTransposeOctaveOffsetLabel}
+                    </div>
+                  </div>
                 </div>
               </div>
               <DrumpadGrid
