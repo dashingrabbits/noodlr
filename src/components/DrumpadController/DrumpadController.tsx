@@ -612,6 +612,7 @@ const DrumpadController = () => {
     () => initialSceneDefinitions[0].id
   );
   const [songModeStatusMessage, setSongModeStatusMessage] = useState("");
+  const [isExportingSong, setIsExportingSong] = useState(false);
   const [projectLoadStatusMessage, setProjectLoadStatusMessage] = useState("");
   const [projectLoadAudit, setProjectLoadAudit] = useState<ProjectLoadAudit | null>(null);
   const [missingProjectSamples, setMissingProjectSamples] = useState<string[]>([]);
@@ -3503,6 +3504,7 @@ const DrumpadController = () => {
     setSongSceneDraftId(defaultScene.id);
     setCurrentSongEntryIndex(null);
     setCurrentSongEntryProgress(null);
+    setIsExportingSong(false);
     setSequencerBpm(DEFAULT_SEQUENCER_BPM);
     setSequencerClockStepLength(BASE_SEQUENCER_STEP_LENGTH);
     setSelectedProjectId("");
@@ -4239,6 +4241,28 @@ const DrumpadController = () => {
         Math.max(0.2, maxReleaseSeconds + maxDelayTailSeconds + 0.05)
       );
       const totalDurationSeconds = patternDurationSeconds + tailSeconds + 0.05;
+
+      const bufferedSamplesByPad = new Map<number, AudioBuffer>();
+
+      for (const padId of sequencePadIds) {
+        const assignedSampleId = (padSampleIds[padId] ?? "").trim();
+        const assignedSample = sampleAssetsById.get(assignedSampleId);
+        if (!assignedSample) {
+          continue;
+        }
+
+        const sampleBuffer =
+          sampleBufferCacheRef.current.get(assignedSample.id) ??
+          (await ensureSampleBuffer(assignedSample));
+        if (sampleBuffer) {
+          bufferedSamplesByPad.set(padId, sampleBuffer);
+        }
+      }
+
+      if (!bufferedSamplesByPad.size) {
+        throw new Error("Unable to load sample audio for export.");
+      }
+
       const sampleRate = 44100;
       const offlineContext = new OfflineAudioContext(
         2,
@@ -4319,27 +4343,6 @@ const DrumpadController = () => {
 
         return voiceGainNode;
       };
-
-      const bufferedSamplesByPad = new Map<number, AudioBuffer>();
-
-      for (const padId of sequencePadIds) {
-        const assignedSampleId = (padSampleIds[padId] ?? "").trim();
-        const assignedSample = sampleAssetsById.get(assignedSampleId);
-        if (!assignedSample) {
-          continue;
-        }
-
-        const sampleBuffer =
-          sampleBufferCacheRef.current.get(assignedSample.id) ??
-          (await ensureSampleBuffer(assignedSample));
-        if (sampleBuffer) {
-          bufferedSamplesByPad.set(padId, sampleBuffer);
-        }
-      }
-
-      if (!bufferedSamplesByPad.size) {
-        throw new Error("Unable to load sample audio for export.");
-      }
 
       type RenderLoopVoice = {
         source: AudioBufferSourceNode;
@@ -4512,6 +4515,422 @@ const DrumpadController = () => {
     ]
   );
 
+  const renderSongArrangementToAudioBuffer = useCallback(async (): Promise<AudioBuffer> => {
+    if (!songArrangementTiming.entryDurations.length) {
+      throw new Error("No scenes in song timeline to export.");
+    }
+
+    type SongRenderGroup = {
+      groupId: PadGroupId;
+      groupState: PadGroupState;
+      selectedPattern: SequencerPattern;
+    };
+
+    type SongRenderEntry = {
+      startTick: number;
+      durationTicks: number;
+      groups: SongRenderGroup[];
+    };
+
+    const songEntriesForRender: SongRenderEntry[] = songArrangementTiming.entryDurations.map(
+      (entryTiming) => {
+        const sceneDefinition = sceneDefinitionsById.get(entryTiming.sceneId);
+        if (!sceneDefinition) {
+          return {
+            startTick: entryTiming.startTick,
+            durationTicks: entryTiming.durationTicks,
+            groups: [],
+          };
+        }
+
+        const groups = PAD_GROUP_IDS.map((groupId) => {
+          const groupState = livePadGroupsState[groupId];
+          const selectedPatternId = sceneDefinition.selectedPatternIdsByGroup[groupId];
+          if (!selectedPatternId) {
+            return null;
+          }
+
+          const selectedPattern = groupState.sequencerPatterns.find(
+            (pattern) => pattern.id === selectedPatternId
+          );
+          if (!selectedPattern) {
+            return null;
+          }
+
+          return {
+            groupId,
+            groupState,
+            selectedPattern,
+          } satisfies SongRenderGroup;
+        }).filter((group): group is SongRenderGroup => Boolean(group));
+
+        return {
+          startTick: entryTiming.startTick,
+          durationTicks: entryTiming.durationTicks,
+          groups,
+        };
+      }
+    );
+
+    const sampleIdsInSong = new Set<string>();
+    let maxReleaseSeconds = 0;
+    let maxDelayTailSeconds = 0;
+
+    songEntriesForRender.forEach((entry) => {
+      entry.groups.forEach(({ groupState, selectedPattern }) => {
+        DRUM_PADS.forEach((pad) => {
+          const padId = pad.id;
+          if (groupState.padRowMuted[padId]) {
+            return;
+          }
+
+          const rowSteps =
+            selectedPattern.padStepSequence[padId] ?? createEmptyStepSequence(STEPS_IN_SEQUENCE);
+          if (!rowSteps.some((stepEnabled) => stepEnabled)) {
+            return;
+          }
+
+          const sampleId = (groupState.padSampleIds[padId] ?? "").trim();
+          if (!sampleId) {
+            return;
+          }
+
+          sampleIdsInSong.add(sampleId);
+          const sampleSettings = groupState.padSampleSettings[padId] ?? DEFAULT_PAD_SAMPLE_SETTINGS;
+          maxReleaseSeconds = Math.max(maxReleaseSeconds, sampleSettings.releaseMs / 1000);
+
+          if (sampleSettings.delayMix <= 0.001) {
+            return;
+          }
+
+          const safeFeedback = Math.max(0, Math.min(0.95, sampleSettings.delayFeedback));
+          const feedbackMultiplier = Math.max(1, Math.min(12, 1 / (1 - safeFeedback)));
+          maxDelayTailSeconds = Math.max(
+            maxDelayTailSeconds,
+            (sampleSettings.delayTimeMs / 1000) * feedbackMultiplier
+          );
+        });
+      });
+    });
+
+    if (!sampleIdsInSong.size) {
+      throw new Error("No playable samples found in song arrangement.");
+    }
+
+    const sampleBuffersById = new Map<string, AudioBuffer>();
+    for (const sampleId of sampleIdsInSong) {
+      const sample = sampleAssetsById.get(sampleId);
+      if (!sample) {
+        continue;
+      }
+
+      const sampleBuffer =
+        sampleBufferCacheRef.current.get(sample.id) ?? (await ensureSampleBuffer(sample));
+      if (sampleBuffer) {
+        sampleBuffersById.set(sample.id, sampleBuffer);
+      }
+    }
+
+    if (!sampleBuffersById.size) {
+      throw new Error("Unable to load sample audio for song export.");
+    }
+
+    const clockRateMultiplier = getStepLengthTickMultiplier(
+      sequencerClockStepLength,
+      BASE_SEQUENCER_STEP_LENGTH
+    );
+    const secondsPerTick =
+      (getSequencerStepDurationMs(sequencerBpm, sequencerEngineStepLength) / 1000) *
+      clockRateMultiplier;
+    const songDurationTicks = Math.max(1, songArrangementTiming.totalTicks);
+    const songDurationSeconds = songDurationTicks * secondsPerTick;
+    const tailSeconds = Math.min(
+      8,
+      Math.max(0.2, maxReleaseSeconds + maxDelayTailSeconds + 0.05)
+    );
+    const totalDurationSeconds = songDurationSeconds + tailSeconds + 0.05;
+    const sampleRate = 48000;
+
+    const offlineContext = new OfflineAudioContext(
+      2,
+      Math.max(1, Math.ceil(totalDurationSeconds * sampleRate)),
+      sampleRate
+    );
+
+    const outputCompressor = offlineContext.createDynamicsCompressor();
+    outputCompressor.threshold.value = -10;
+    outputCompressor.knee.value = 10;
+    outputCompressor.ratio.value = 12;
+    outputCompressor.attack.value = 0.003;
+    outputCompressor.release.value = 0.08;
+    outputCompressor.connect(offlineContext.destination);
+
+    const createReverbImpulseBuffer = (): AudioBuffer => {
+      const durationSeconds = 1.8;
+      const length = Math.floor(offlineContext.sampleRate * durationSeconds);
+      const impulseBuffer = offlineContext.createBuffer(2, length, offlineContext.sampleRate);
+
+      for (let channel = 0; channel < impulseBuffer.numberOfChannels; channel += 1) {
+        const channelData = impulseBuffer.getChannelData(channel);
+        for (let sampleIndex = 0; sampleIndex < length; sampleIndex += 1) {
+          const decay = Math.pow(1 - sampleIndex / length, 3);
+          channelData[sampleIndex] = (Math.random() * 2 - 1) * decay;
+        }
+      }
+
+      return impulseBuffer;
+    };
+
+    const reverbImpulseBuffer = createReverbImpulseBuffer();
+
+    const createRenderVoiceGainNode = (sampleSettings: PadSampleSettings): GainNode => {
+      const voiceGainNode = offlineContext.createGain();
+      const reverbMix = Math.max(0, Math.min(1, sampleSettings.reverbMix));
+      const delayMix = Math.max(0, Math.min(1, sampleSettings.delayMix));
+      const dryMix = Math.max(0, 1 - Math.min(1, reverbMix + delayMix));
+
+      const dryGainNode = offlineContext.createGain();
+      dryGainNode.gain.value = dryMix;
+      voiceGainNode.connect(dryGainNode);
+      dryGainNode.connect(outputCompressor);
+
+      if (reverbMix > 0.001) {
+        const reverbSendGainNode = offlineContext.createGain();
+        reverbSendGainNode.gain.value = reverbMix;
+        const convolverNode = offlineContext.createConvolver();
+        convolverNode.buffer = reverbImpulseBuffer;
+
+        voiceGainNode.connect(reverbSendGainNode);
+        reverbSendGainNode.connect(convolverNode);
+        convolverNode.connect(outputCompressor);
+      }
+
+      if (delayMix > 0.001) {
+        const delaySendGainNode = offlineContext.createGain();
+        delaySendGainNode.gain.value = delayMix;
+
+        const delayNode = offlineContext.createDelay(1.0);
+        delayNode.delayTime.value = Math.max(
+          0.001,
+          Math.min(1, sampleSettings.delayTimeMs / 1000)
+        );
+
+        const feedbackGainNode = offlineContext.createGain();
+        feedbackGainNode.gain.value = Math.max(
+          0,
+          Math.min(0.95, sampleSettings.delayFeedback)
+        );
+
+        voiceGainNode.connect(delaySendGainNode);
+        delaySendGainNode.connect(delayNode);
+        delayNode.connect(feedbackGainNode);
+        feedbackGainNode.connect(delayNode);
+        delayNode.connect(outputCompressor);
+      }
+
+      return voiceGainNode;
+    };
+
+    type RenderLoopVoice = {
+      source: AudioBufferSourceNode;
+      gainNode: GainNode;
+      releaseSeconds: number;
+    };
+
+    const activeLoopVoices = new Map<number, RenderLoopVoice>();
+    const stopLoopVoice = (
+      voice: RenderLoopVoice,
+      stopTime: number,
+      allowReleaseTail = true
+    ) => {
+      const safeStopTime = Math.max(0, stopTime);
+      const fadeSeconds = allowReleaseTail
+        ? Math.max(VOICE_STOP_FADE_SECONDS, voice.releaseSeconds)
+        : VOICE_STOP_FADE_SECONDS;
+      voice.gainNode.gain.cancelScheduledValues(safeStopTime);
+      voice.gainNode.gain.setValueAtTime(voice.gainNode.gain.value, safeStopTime);
+      voice.gainNode.gain.linearRampToValueAtTime(0, safeStopTime + fadeSeconds);
+      voice.source.stop(safeStopTime + fadeSeconds + 0.001);
+    };
+
+    songEntriesForRender.forEach((entry) => {
+      const sceneEndTimeSeconds = (entry.startTick + entry.durationTicks) * secondsPerTick;
+      for (let sceneTick = 0; sceneTick < entry.durationTicks; sceneTick += 1) {
+        const absoluteTick = entry.startTick + sceneTick;
+        const eventTimeSeconds = absoluteTick * secondsPerTick;
+
+        entry.groups.forEach(({ groupId, groupState, selectedPattern }) => {
+          DRUM_PADS.forEach((pad) => {
+            const padId = pad.id;
+            if (groupState.padRowMuted[padId]) {
+              return;
+            }
+
+            const rowStepLength = selectedPattern.padStepLength[padId] ?? DEFAULT_ROW_STEP_LENGTH;
+            const rowStepTickMultiplier = getStepLengthTickMultiplier(
+              rowStepLength,
+              sequencerEngineStepLength
+            );
+            if (sceneTick % rowStepTickMultiplier !== 0) {
+              return;
+            }
+
+            const rowStepIndex = Math.floor(sceneTick / rowStepTickMultiplier) % STEPS_IN_SEQUENCE;
+            const rowSteps =
+              selectedPattern.padStepSequence[padId] ?? createEmptyStepSequence(STEPS_IN_SEQUENCE);
+            if (!rowSteps[rowStepIndex]) {
+              return;
+            }
+
+            const sampleId = (groupState.padSampleIds[padId] ?? "").trim();
+            const sampleBuffer = sampleBuffersById.get(sampleId);
+            if (!sampleBuffer) {
+              return;
+            }
+
+            const rowStepOctaves =
+              selectedPattern.padStepOctaves[padId] ?? EMPTY_STEP_OCTAVE_SEQUENCE;
+            const transposeSemitoneOffset = getNormalizedStepOctaveSemitoneOffset(
+              rowStepOctaves[rowStepIndex]
+            );
+            const playbackRate = Math.pow(
+              2,
+              transposeSemitoneOffset / OCTAVE_TRANSPOSE_SEMITONES
+            );
+            const sampleSettings = groupState.padSampleSettings[padId] ?? DEFAULT_PAD_SAMPLE_SETTINGS;
+            const padVolume = groupState.padVolumes[padId] ?? DEFAULT_PAD_VOLUME;
+            const outputGain = Math.max(
+              0,
+              Math.min(1, (masterVolume / 100) * (padVolume / 100))
+            );
+            const syntheticPadId = groupId * 100 + padId;
+            const playbackBounds = getSamplePlaybackBounds(sampleBuffer, sampleSettings);
+            const isLoopEnabled = groupState.padLoopEnabled[padId] ?? false;
+
+            if (isLoopEnabled) {
+              const existingLoopVoice = activeLoopVoices.get(syntheticPadId);
+              if (existingLoopVoice) {
+                stopLoopVoice(existingLoopVoice, eventTimeSeconds);
+                activeLoopVoices.delete(syntheticPadId);
+              }
+
+              const source = offlineContext.createBufferSource();
+              source.buffer = sampleBuffer;
+              source.loop = true;
+              source.loopStart = playbackBounds.offsetSeconds;
+              source.loopEnd = playbackBounds.endOffsetSeconds;
+              source.playbackRate.value = playbackRate;
+
+              const gainNode = createRenderVoiceGainNode(sampleSettings);
+              const attackSeconds = Math.max(0, sampleSettings.attackMs / 1000);
+              const decaySeconds = Math.max(0, sampleSettings.decayMs / 1000);
+              const sustainLevel = Math.max(0, Math.min(1, sampleSettings.sustain));
+              const sustainGain = outputGain * sustainLevel;
+
+              gainNode.gain.cancelScheduledValues(eventTimeSeconds);
+              if (attackSeconds > 0) {
+                gainNode.gain.setValueAtTime(0, eventTimeSeconds);
+                gainNode.gain.linearRampToValueAtTime(
+                  outputGain,
+                  eventTimeSeconds + attackSeconds
+                );
+              } else {
+                gainNode.gain.setValueAtTime(outputGain, eventTimeSeconds);
+              }
+              if (decaySeconds > 0) {
+                gainNode.gain.linearRampToValueAtTime(
+                  sustainGain,
+                  eventTimeSeconds + attackSeconds + decaySeconds
+                );
+              } else {
+                gainNode.gain.setValueAtTime(sustainGain, eventTimeSeconds + attackSeconds);
+              }
+
+              source.connect(gainNode);
+              source.start(eventTimeSeconds, playbackBounds.offsetSeconds);
+              activeLoopVoices.set(syntheticPadId, {
+                source,
+                gainNode,
+                releaseSeconds: Math.max(0, sampleSettings.releaseMs / 1000),
+              });
+              return;
+            }
+
+            const source = offlineContext.createBufferSource();
+            source.buffer = sampleBuffer;
+            source.playbackRate.value = playbackRate;
+
+            const gainNode = createRenderVoiceGainNode(sampleSettings);
+            const attackSeconds = Math.max(0, sampleSettings.attackMs / 1000);
+            const decaySeconds = Math.max(0, sampleSettings.decayMs / 1000);
+            const releaseSeconds = Math.max(0, sampleSettings.releaseMs / 1000);
+            const sustainLevel = Math.max(0, Math.min(1, sampleSettings.sustain));
+            const sustainGain = outputGain * sustainLevel;
+            const attackEndTime = eventTimeSeconds + attackSeconds;
+            const decayEndTime = attackEndTime + decaySeconds;
+            const naturalEndTime = eventTimeSeconds + playbackBounds.durationSeconds / playbackRate;
+            const cappedEndTime = Math.max(
+              eventTimeSeconds + 0.001,
+              Math.min(naturalEndTime, sceneEndTimeSeconds)
+            );
+
+            gainNode.gain.cancelScheduledValues(eventTimeSeconds);
+            if (attackSeconds > 0) {
+              gainNode.gain.setValueAtTime(0, eventTimeSeconds);
+              gainNode.gain.linearRampToValueAtTime(outputGain, attackEndTime);
+            } else {
+              gainNode.gain.setValueAtTime(outputGain, eventTimeSeconds);
+            }
+
+            if (decaySeconds > 0) {
+              gainNode.gain.linearRampToValueAtTime(sustainGain, decayEndTime);
+            } else {
+              gainNode.gain.setValueAtTime(sustainGain, attackEndTime);
+            }
+
+            if (releaseSeconds > 0 && cappedEndTime > decayEndTime) {
+              const releaseStartTime = Math.max(decayEndTime, cappedEndTime - releaseSeconds);
+              gainNode.gain.setValueAtTime(sustainGain, releaseStartTime);
+              gainNode.gain.linearRampToValueAtTime(0, cappedEndTime);
+            } else if (cappedEndTime < naturalEndTime) {
+              gainNode.gain.setValueAtTime(0, cappedEndTime);
+            }
+
+            source.connect(gainNode);
+            source.start(
+              eventTimeSeconds,
+              playbackBounds.offsetSeconds,
+              playbackBounds.durationSeconds
+            );
+            source.stop(cappedEndTime + 0.001);
+          });
+        });
+      }
+
+      activeLoopVoices.forEach((voice) => {
+        stopLoopVoice(voice, sceneEndTimeSeconds, false);
+      });
+      activeLoopVoices.clear();
+    });
+
+    activeLoopVoices.forEach((voice) => {
+      stopLoopVoice(voice, songDurationSeconds, false);
+    });
+    activeLoopVoices.clear();
+
+    return offlineContext.startRendering();
+  }, [
+    ensureSampleBuffer,
+    livePadGroupsState,
+    masterVolume,
+    sampleAssetsById,
+    sceneDefinitionsById,
+    sequencerBpm,
+    sequencerClockStepLength,
+    sequencerEngineStepLength,
+    songArrangementTiming,
+  ]);
+
   const downloadRenderedAudioBuffer = useCallback(
     (audioBuffer: AudioBuffer, fileNameStem: string) => {
       const sanitizedStem =
@@ -4570,6 +4989,34 @@ const DrumpadController = () => {
       renderSequencerSelectionToAudioBuffer,
     ]
   );
+
+  const handleExportSong = useCallback(async () => {
+    const renderedBuffer = await renderSongArrangementToAudioBuffer();
+    const baseName = sanitizeProjectName(selectedProject?.name ?? "") || "Song";
+    downloadRenderedAudioBuffer(renderedBuffer, `${baseName}-song`);
+  }, [downloadRenderedAudioBuffer, renderSongArrangementToAudioBuffer, selectedProject]);
+
+  const handleExportSongWithStatus = useCallback(() => {
+    if (isExportingSong) {
+      return;
+    }
+
+    setIsExportingSong(true);
+    void (async () => {
+      try {
+        await handleExportSong();
+        setSongModeStatusMessage("Song exported.");
+      } catch (error) {
+        setSongModeStatusMessage(
+          error instanceof Error && error.message.trim()
+            ? error.message
+            : "Song export failed."
+        );
+      } finally {
+        setIsExportingSong(false);
+      }
+    })();
+  }, [handleExportSong, isExportingSong]);
 
   const handleOpenSaveProjectModal = useCallback(() => {
     setProjectNameDraft(selectedProject?.name ?? "");
@@ -5720,6 +6167,14 @@ const DrumpadController = () => {
                     >
                       {isPlaying && sequencerPanelMode === "song" ? "Stop Song" : "Play Song"}
                     </button>
+                    <button
+                      type="button"
+                      className="px-3 py-1.5 rounded-md text-xs font-bold border border-[#4f617d] bg-[#5f7598] text-[#f7f7f5] hover:bg-[#526687] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                      disabled={!songArrangement.length || isExportingSong}
+                      onClick={handleExportSongWithStatus}
+                    >
+                      {isExportingSong ? "Exporting..." : "Export Song (.wav)"}
+                    </button>
                   </div>
                 </div>
                 {songArrangement.length ? (
@@ -5989,7 +6444,7 @@ const DrumpadController = () => {
       {songModeStatusMessage ? (
         <div className="fixed inset-0 z-[4000] bg-black/35 backdrop-blur-[1px] flex items-center justify-center p-4">
           <div className="w-full max-w-sm rounded-xl border border-[#a8aba5] bg-[#f6f5ef] p-4 shadow-2xl">
-            <h4 className="text-[#515a6a] text-base font-bold mb-2">Song Updated</h4>
+            <h4 className="text-[#515a6a] text-base font-bold mb-2">Song Status</h4>
             <p className="text-sm text-[#575757]">{songModeStatusMessage}</p>
             <div className="mt-4 flex justify-end">
               <button
