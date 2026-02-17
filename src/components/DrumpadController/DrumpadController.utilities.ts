@@ -28,6 +28,11 @@ export const MIN_PAD_SUSTAIN = 0;
 export const MAX_PAD_SUSTAIN = 1;
 export const MIN_PAD_RELEASE_MS = 0;
 export const MAX_PAD_RELEASE_MS = 2000;
+export const MIN_PAD_SAMPLE_START = 0;
+export const MAX_PAD_SAMPLE_START = 1;
+export const MIN_PAD_SAMPLE_END = 0;
+export const MAX_PAD_SAMPLE_END = 1;
+export const MIN_PAD_SAMPLE_TRIM_RANGE = 0.005;
 export const MIN_PAD_REVERB_MIX = 0;
 export const MAX_PAD_REVERB_MIX = 1;
 export const MIN_PAD_DELAY_MIX = 0;
@@ -42,6 +47,8 @@ export const DEFAULT_PAD_SAMPLE_SETTINGS: PadSampleSettings = {
   decayMs: 120,
   sustain: 0.95,
   releaseMs: 120,
+  sampleStart: 0,
+  sampleEnd: 1,
   reverbMix: 0,
   delayMix: 0,
   delayTimeMs: 220,
@@ -149,6 +156,30 @@ const clampValue = (value: number, min: number, max: number): number => {
 export const normalizePadSampleSettings = (
   candidate?: Partial<PadSampleSettings>
 ): PadSampleSettings => {
+  const normalizedSampleStartCandidate = clampValue(
+    Number(candidate?.sampleStart ?? DEFAULT_PAD_SAMPLE_SETTINGS.sampleStart),
+    MIN_PAD_SAMPLE_START,
+    MAX_PAD_SAMPLE_START
+  );
+  const normalizedSampleEndCandidate = clampValue(
+    Number(candidate?.sampleEnd ?? DEFAULT_PAD_SAMPLE_SETTINGS.sampleEnd),
+    MIN_PAD_SAMPLE_END,
+    MAX_PAD_SAMPLE_END
+  );
+  const normalizedSampleEnd = clampValue(
+    Math.max(
+      normalizedSampleEndCandidate,
+      normalizedSampleStartCandidate + MIN_PAD_SAMPLE_TRIM_RANGE
+    ),
+    MIN_PAD_SAMPLE_END,
+    MAX_PAD_SAMPLE_END
+  );
+  const normalizedSampleStart = clampValue(
+    Math.min(normalizedSampleStartCandidate, normalizedSampleEnd - MIN_PAD_SAMPLE_TRIM_RANGE),
+    MIN_PAD_SAMPLE_START,
+    MAX_PAD_SAMPLE_START
+  );
+
   return {
     attackMs: clampValue(
       Number(candidate?.attackMs ?? DEFAULT_PAD_SAMPLE_SETTINGS.attackMs),
@@ -170,6 +201,8 @@ export const normalizePadSampleSettings = (
       MIN_PAD_RELEASE_MS,
       MAX_PAD_RELEASE_MS
     ),
+    sampleStart: normalizedSampleStart,
+    sampleEnd: normalizedSampleEnd,
     reverbMix: clampValue(
       Number(candidate?.reverbMix ?? DEFAULT_PAD_SAMPLE_SETTINGS.reverbMix),
       MIN_PAD_REVERB_MIX,

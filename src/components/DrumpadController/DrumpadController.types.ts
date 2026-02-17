@@ -21,6 +21,8 @@ export interface PadSampleSettings {
   decayMs: number;
   sustain: number;
   releaseMs: number;
+  sampleStart: number;
+  sampleEnd: number;
   reverbMix: number;
   delayMix: number;
   delayTimeMs: number;

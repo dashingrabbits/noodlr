@@ -26,6 +26,15 @@ export const padSampleNameClassName =
   "min-w-0 flex-1 truncate rounded-md border border-[#a8aba5] bg-[#fbfaf6] px-2 py-1.5 text-xs text-[#2a2a2a]";
 export const padSampleClearButtonClassName =
   "rounded-md border border-[#9d8774] bg-[#f3dcc2] px-2 py-1.5 text-xs font-bold text-[#3a2a19] transition-colors hover:bg-[#e7cbac] disabled:opacity-50 disabled:cursor-not-allowed";
+export const sampleTrimSectionClassName = "mt-3 rounded-md border border-[#b8b5aa] bg-[#fbfaf6] p-2";
+export const sampleTrimHeaderClassName =
+  "mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-bold uppercase tracking-wide text-[#474747]";
+export const sampleTrimWaveformClassName =
+  "w-full rounded-md border border-[#b8b5aa] bg-[linear-gradient(180deg,rgba(255,140,43,0.08),rgba(246,245,239,1))]";
+export const sampleTrimHintClassName = "mt-2 text-[10px] text-[#616161]";
+export const sampleTrimFaderListClassName = "mt-2 space-y-2";
+export const sampleTrimResetButtonClassName =
+  "rounded-md border border-[#a8aba5] bg-[#d4d4ce] px-2 py-1 text-[10px] font-bold text-[#515a6a] transition-colors hover:bg-[#c4c6bf]";
 export const envelopeGraphWrapClassName =
   "rounded-md border border-[#b8b5aa] bg-[#fbfaf6] p-2";
 export const envelopeGraphClassName =

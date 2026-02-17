@@ -64,6 +64,7 @@ import {
   createKeyboardPadMap,
   DEFAULT_PAD_VOLUME,
   DRUM_PADS,
+  MIN_PAD_SAMPLE_TRIM_RANGE,
   normalizePadSampleSettings,
   PAD_TRIGGER_DURATION_MS,
   readPersistedSampleSoundsDir,
@@ -241,6 +242,37 @@ const lcm = (left: number, right: number): number => {
   const normalizedLeft = Math.max(1, Math.round(Math.abs(left)));
   const normalizedRight = Math.max(1, Math.round(Math.abs(right)));
   return Math.max(1, (normalizedLeft * normalizedRight) / gcd(normalizedLeft, normalizedRight));
+};
+
+type SamplePlaybackBounds = {
+  offsetSeconds: number;
+  endOffsetSeconds: number;
+  durationSeconds: number;
+};
+
+const getSamplePlaybackBounds = (
+  sampleBuffer: AudioBuffer,
+  sampleSettings: PadSampleSettings
+): SamplePlaybackBounds => {
+  const bufferDurationSeconds = Math.max(0, sampleBuffer.duration);
+  const maxStartRatio = Math.max(0, 1 - MIN_PAD_SAMPLE_TRIM_RANGE);
+  const normalizedSampleStart = Math.max(
+    0,
+    Math.min(maxStartRatio, Number(sampleSettings.sampleStart ?? 0))
+  );
+  const normalizedSampleEnd = Math.max(
+    normalizedSampleStart + MIN_PAD_SAMPLE_TRIM_RANGE,
+    Math.min(1, Number(sampleSettings.sampleEnd ?? 1))
+  );
+  const offsetSeconds = bufferDurationSeconds * normalizedSampleStart;
+  const endOffsetSeconds = bufferDurationSeconds * normalizedSampleEnd;
+  const minDurationSeconds = sampleBuffer.sampleRate > 0 ? 1 / sampleBuffer.sampleRate : 0.001;
+
+  return {
+    offsetSeconds,
+    endOffsetSeconds,
+    durationSeconds: Math.max(minDurationSeconds, endOffsetSeconds - offsetSeconds),
+  };
 };
 
 const areSceneDefinitionsEqual = (
@@ -603,6 +635,8 @@ const DrumpadController = () => {
     readSavedProjectsFromSession()
   );
   const [editingPadId, setEditingPadId] = useState<number | null>(null);
+  const [editingPadSampleBuffer, setEditingPadSampleBuffer] = useState<AudioBuffer | null>(null);
+  const [isEditingPadSampleBufferLoading, setIsEditingPadSampleBufferLoading] = useState(false);
   const [sampleAssignPadId, setSampleAssignPadId] = useState<number | null>(null);
   const [padEditorSaveMessage, setPadEditorSaveMessage] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState("");
@@ -825,6 +859,14 @@ const DrumpadController = () => {
 
     return padSampleIds[editingPad.id] ?? "";
   }, [editingPad, padSampleIds]);
+
+  const editingPadSample = useMemo(() => {
+    if (!editingPadSampleId) {
+      return null;
+    }
+
+    return sampleAssetsById.get(editingPadSampleId) ?? null;
+  }, [editingPadSampleId, sampleAssetsById]);
 
   masterVolumeRef.current = masterVolume;
   sequencerPanelModeRef.current = sequencerPanelMode;
@@ -1639,6 +1681,49 @@ const DrumpadController = () => {
     [ensureAudioContextReady]
   );
 
+  useEffect(() => {
+    let didCancel = false;
+
+    if (!editingPad || !editingPadSample) {
+      setEditingPadSampleBuffer(null);
+      setIsEditingPadSampleBufferLoading(false);
+      return () => {
+        didCancel = true;
+      };
+    }
+
+    const cachedBuffer = sampleBufferCacheRef.current.get(editingPadSample.id);
+    if (cachedBuffer) {
+      setEditingPadSampleBuffer(cachedBuffer);
+      setIsEditingPadSampleBufferLoading(false);
+      return () => {
+        didCancel = true;
+      };
+    }
+
+    setEditingPadSampleBuffer(null);
+    setIsEditingPadSampleBufferLoading(true);
+    void ensureSampleBuffer(editingPadSample)
+      .then((sampleBuffer) => {
+        if (didCancel) {
+          return;
+        }
+        setEditingPadSampleBuffer(sampleBuffer);
+        setIsEditingPadSampleBufferLoading(false);
+      })
+      .catch(() => {
+        if (didCancel) {
+          return;
+        }
+        setEditingPadSampleBuffer(null);
+        setIsEditingPadSampleBufferLoading(false);
+      });
+
+    return () => {
+      didCancel = true;
+    };
+  }, [editingPad, editingPadSample, ensureSampleBuffer]);
+
   const playBufferSource = useCallback(
     (
       context: AudioContext,
@@ -1681,6 +1766,7 @@ const DrumpadController = () => {
         getNormalizedStepOctaveSemitoneOffset(transposeSemitoneOffset) / OCTAVE_TRANSPOSE_SEMITONES
       );
       source.playbackRate.value = playbackRate;
+      const playbackBounds = getSamplePlaybackBounds(sampleBuffer, sampleSettings);
 
       const gainNode = createVoiceGainNode(context, sampleSettings);
       const scheduledStartTime = startTime ?? context.currentTime;
@@ -1691,7 +1777,7 @@ const DrumpadController = () => {
       const sustainGain = outputGain * sustainLevel;
       const attackEndTime = scheduledStartTime + attackSeconds;
       const decayEndTime = attackEndTime + decaySeconds;
-      const naturalEndTime = scheduledStartTime + sampleBuffer.duration / playbackRate;
+      const naturalEndTime = scheduledStartTime + playbackBounds.durationSeconds / playbackRate;
 
       gainNode.gain.cancelScheduledValues(scheduledStartTime);
       if (attackSeconds > 0) {
@@ -1726,7 +1812,11 @@ const DrumpadController = () => {
         );
       };
 
-      source.start(scheduledStartTime);
+      source.start(
+        scheduledStartTime,
+        playbackBounds.offsetSeconds,
+        playbackBounds.durationSeconds
+      );
     },
     [createVoiceGainNode]
   );
@@ -1997,6 +2087,9 @@ const DrumpadController = () => {
         2,
         getNormalizedStepOctaveSemitoneOffset(transposeSemitoneOffset) / OCTAVE_TRANSPOSE_SEMITONES
       );
+      const playbackBounds = getSamplePlaybackBounds(sampleBuffer, sampleSettings);
+      source.loopStart = playbackBounds.offsetSeconds;
+      source.loopEnd = playbackBounds.endOffsetSeconds;
 
       const gainNode = createVoiceGainNode(context, sampleSettings);
       const scheduledStartTime = startTime ?? context.currentTime;
@@ -2035,7 +2128,7 @@ const DrumpadController = () => {
         gainNode,
         releaseSeconds: Math.max(0, sampleSettings.releaseMs / 1000),
       });
-      source.start(scheduledStartTime);
+      source.start(scheduledStartTime, playbackBounds.offsetSeconds);
     },
     [createVoiceGainNode, stopLoopBufferSourceForPad]
   );
@@ -3415,6 +3508,8 @@ const DrumpadController = () => {
     setSelectedProjectId("");
     setPadEditorSaveMessage("");
     setEditingPadId(null);
+    setEditingPadSampleBuffer(null);
+    setIsEditingPadSampleBufferLoading(false);
     setSampleAssignPadId(null);
     setProjectNameDraft("");
     setIsSaveProjectModalOpen(false);
@@ -4313,6 +4408,9 @@ const DrumpadController = () => {
             source.buffer = sampleBuffer;
             source.loop = true;
             source.playbackRate.value = playbackRate;
+            const playbackBounds = getSamplePlaybackBounds(sampleBuffer, sampleSettings);
+            source.loopStart = playbackBounds.offsetSeconds;
+            source.loopEnd = playbackBounds.endOffsetSeconds;
 
             const gainNode = createRenderVoiceGainNode(sampleSettings);
             const attackSeconds = Math.max(0, sampleSettings.attackMs / 1000);
@@ -4340,7 +4438,7 @@ const DrumpadController = () => {
             }
 
             source.connect(gainNode);
-            source.start(eventTimeSeconds);
+            source.start(eventTimeSeconds, playbackBounds.offsetSeconds);
             activeLoopVoices.set(padId, {
               source,
               gainNode,
@@ -4352,6 +4450,7 @@ const DrumpadController = () => {
           const source = offlineContext.createBufferSource();
           source.buffer = sampleBuffer;
           source.playbackRate.value = playbackRate;
+          const playbackBounds = getSamplePlaybackBounds(sampleBuffer, sampleSettings);
 
           const gainNode = createRenderVoiceGainNode(sampleSettings);
           const attackSeconds = Math.max(0, sampleSettings.attackMs / 1000);
@@ -4361,7 +4460,7 @@ const DrumpadController = () => {
           const sustainGain = outputGain * sustainLevel;
           const attackEndTime = eventTimeSeconds + attackSeconds;
           const decayEndTime = attackEndTime + decaySeconds;
-          const naturalEndTime = eventTimeSeconds + sampleBuffer.duration / playbackRate;
+          const naturalEndTime = eventTimeSeconds + playbackBounds.durationSeconds / playbackRate;
 
           gainNode.gain.cancelScheduledValues(eventTimeSeconds);
           if (attackSeconds > 0) {
@@ -4384,7 +4483,7 @@ const DrumpadController = () => {
           }
 
           source.connect(gainNode);
-          source.start(eventTimeSeconds);
+          source.start(eventTimeSeconds, playbackBounds.offsetSeconds, playbackBounds.durationSeconds);
         }
       }
 
@@ -4572,6 +4671,8 @@ const DrumpadController = () => {
     if (!isOpen) {
       setPadEditorSaveMessage("");
       setEditingPadId(null);
+      setEditingPadSampleBuffer(null);
+      setIsEditingPadSampleBufferLoading(false);
     }
   }, []);
 
@@ -5805,6 +5906,8 @@ const DrumpadController = () => {
         isOpen={Boolean(editingPad)}
         padName={editingPad ? padNames[editingPad.id] ?? editingPad.label : ""}
         sampleName={editingPad ? padAssignedSamples[editingPad.id]?.name ?? "" : ""}
+        sampleBuffer={editingPadSampleBuffer}
+        isSampleBufferLoading={isEditingPadSampleBufferLoading}
         padVolume={editingPad ? padVolumes[editingPad.id] ?? DEFAULT_PAD_VOLUME : DEFAULT_PAD_VOLUME}
         padPolyphony={
           editingPad ? padPolyphony[editingPad.id] ?? DEFAULT_SAMPLE_POLYPHONY : DEFAULT_SAMPLE_POLYPHONY

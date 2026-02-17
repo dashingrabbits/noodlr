@@ -4,6 +4,8 @@ export interface PadSampleEditorModalProps {
   isOpen: boolean;
   padName: string;
   sampleName: string;
+  sampleBuffer: AudioBuffer | null;
+  isSampleBufferLoading?: boolean;
   padVolume: number;
   padPolyphony: number;
   isLoopEnabled: boolean;

@@ -1,5 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { KnobHeadless, KnobHeadlessLabel, useKnobKeyboardControls } from "react-knob-headless";
 import { ChevronDown, Infinity as InfinityIcon, RotateCcw, Trash2, X } from "lucide-react";
 import type { KnobFieldProps, PadSampleEditorModalProps } from "./PadSampleEditorModal.types";
@@ -38,6 +38,12 @@ import {
   padSampleClearButtonClassName,
   padSampleNameClassName,
   padSampleRowClassName,
+  sampleTrimFaderListClassName,
+  sampleTrimHeaderClassName,
+  sampleTrimHintClassName,
+  sampleTrimResetButtonClassName,
+  sampleTrimSectionClassName,
+  sampleTrimWaveformClassName,
   padSelectClassName,
   padSettingsGridClassName,
   padTextInputClassName,
@@ -57,7 +63,10 @@ import {
 } from "./PadSampleEditorModal.styles";
 import { PAD_NAME_MAX_LENGTH } from "../Drumpad/Drumpad.utilities";
 import {
+  MIN_PAD_SAMPLE_START,
+  MIN_PAD_SAMPLE_TRIM_RANGE,
   MAX_SAMPLE_POLYPHONY,
+  MAX_PAD_SAMPLE_END,
   MIN_SAMPLE_POLYPHONY,
 } from "../DrumpadController/DrumpadController.utilities";
 
@@ -163,6 +172,313 @@ const EnvelopeFaderRow = ({
       />
       <span className={envelopeFaderValueClassName}>{displayValue}</span>
     </label>
+  );
+};
+
+const SAMPLE_TRIM_GRAPH_BOUNDS = {
+  width: 560,
+  height: 140,
+  xStart: 20,
+  xEnd: 540,
+  yTop: 14,
+  yBottom: 126,
+};
+
+const SAMPLE_WAVEFORM_BAR_COUNT = 120;
+
+const formatSeconds = (value: number): string => {
+  return `${value >= 10 ? value.toFixed(1) : value.toFixed(2)}s`;
+};
+
+const buildWaveformPeaks = (sampleBuffer: AudioBuffer): number[] => {
+  const totalSamples = sampleBuffer.length;
+  if (totalSamples <= 0) {
+    return Array.from({ length: SAMPLE_WAVEFORM_BAR_COUNT }, () => 0);
+  }
+
+  const samplesPerBucket = Math.max(1, Math.floor(totalSamples / SAMPLE_WAVEFORM_BAR_COUNT));
+  const sampleStride = Math.max(1, Math.floor(samplesPerBucket / 24));
+  const channels = Array.from({ length: sampleBuffer.numberOfChannels }, (_, channelIndex) =>
+    sampleBuffer.getChannelData(channelIndex)
+  );
+
+  const peaks = Array.from({ length: SAMPLE_WAVEFORM_BAR_COUNT }, (_, bucketIndex) => {
+    const startSampleIndex = bucketIndex * samplesPerBucket;
+    const endSampleIndex =
+      bucketIndex === SAMPLE_WAVEFORM_BAR_COUNT - 1
+        ? totalSamples
+        : Math.min(totalSamples, (bucketIndex + 1) * samplesPerBucket);
+
+    let peak = 0;
+    for (
+      let sampleIndex = startSampleIndex;
+      sampleIndex < endSampleIndex;
+      sampleIndex += sampleStride
+    ) {
+      for (const channelData of channels) {
+        peak = Math.max(peak, Math.abs(channelData[sampleIndex] ?? 0));
+      }
+    }
+
+    return peak;
+  });
+
+  const maxPeak = Math.max(0.001, ...peaks);
+  return peaks.map((peak) => peak / maxPeak);
+};
+
+const SampleTrimEditor = ({
+  sampleBuffer,
+  isSampleBufferLoading,
+  sampleStart,
+  sampleEnd,
+  onChange,
+}: {
+  sampleBuffer: AudioBuffer | null;
+  isSampleBufferLoading: boolean;
+  sampleStart: number;
+  sampleEnd: number;
+  onChange: (nextSettings: { sampleStart?: number; sampleEnd?: number }) => void;
+}) => {
+  const [dragTarget, setDragTarget] = useState<"start" | "end" | null>(null);
+
+  const waveformPeaks = useMemo(() => {
+    if (!sampleBuffer) {
+      return [];
+    }
+
+    return buildWaveformPeaks(sampleBuffer);
+  }, [sampleBuffer]);
+
+  const maxTrimStart = Math.max(
+    MIN_PAD_SAMPLE_START,
+    MAX_PAD_SAMPLE_END - MIN_PAD_SAMPLE_TRIM_RANGE
+  );
+  const normalizedSampleStart = clamp(sampleStart, MIN_PAD_SAMPLE_START, maxTrimStart);
+  const normalizedSampleEnd = clamp(
+    sampleEnd,
+    normalizedSampleStart + MIN_PAD_SAMPLE_TRIM_RANGE,
+    MAX_PAD_SAMPLE_END
+  );
+  const durationSeconds = sampleBuffer?.duration ?? 0;
+  const startTimeSeconds = durationSeconds * normalizedSampleStart;
+  const endTimeSeconds = durationSeconds * normalizedSampleEnd;
+  const playbackDurationSeconds = Math.max(0, endTimeSeconds - startTimeSeconds);
+  const graphWidth = SAMPLE_TRIM_GRAPH_BOUNDS.xEnd - SAMPLE_TRIM_GRAPH_BOUNDS.xStart;
+  const graphHeight = SAMPLE_TRIM_GRAPH_BOUNDS.yBottom - SAMPLE_TRIM_GRAPH_BOUNDS.yTop;
+  const startX = SAMPLE_TRIM_GRAPH_BOUNDS.xStart + normalizedSampleStart * graphWidth;
+  const endX = SAMPLE_TRIM_GRAPH_BOUNDS.xStart + normalizedSampleEnd * graphWidth;
+
+  const updateFromPointer = useCallback(
+    (clientX: number, target: "start" | "end") => {
+      const clampedX = clamp(clientX, SAMPLE_TRIM_GRAPH_BOUNDS.xStart, SAMPLE_TRIM_GRAPH_BOUNDS.xEnd);
+      const ratio = (clampedX - SAMPLE_TRIM_GRAPH_BOUNDS.xStart) / graphWidth;
+
+      if (target === "start") {
+        const nextSampleStart = clamp(
+          roundToStep(ratio, 0.001),
+          MIN_PAD_SAMPLE_START,
+          normalizedSampleEnd - MIN_PAD_SAMPLE_TRIM_RANGE
+        );
+        onChange({ sampleStart: nextSampleStart });
+        return;
+      }
+
+      const nextSampleEnd = clamp(
+        roundToStep(ratio, 0.001),
+        normalizedSampleStart + MIN_PAD_SAMPLE_TRIM_RANGE,
+        MAX_PAD_SAMPLE_END
+      );
+      onChange({ sampleEnd: nextSampleEnd });
+    },
+    [graphWidth, normalizedSampleEnd, normalizedSampleStart, onChange]
+  );
+
+  if (!sampleBuffer) {
+    return (
+      <div className={sampleTrimSectionClassName}>
+        <div className={sampleTrimHeaderClassName}>Sample Trim</div>
+        <div className={sampleTrimHintClassName}>
+          {isSampleBufferLoading ? "Loading sample waveform..." : "Assign a sample to trim playback."}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={sampleTrimSectionClassName}>
+      <div className={sampleTrimHeaderClassName}>
+        <span>Sample Trim</span>
+        <span>Start {formatSeconds(startTimeSeconds)}</span>
+        <span>End {formatSeconds(endTimeSeconds)}</span>
+        <span>Playback {formatSeconds(playbackDurationSeconds)}</span>
+        <button
+          type="button"
+          className={sampleTrimResetButtonClassName}
+          onClick={() => onChange({ sampleStart: 0, sampleEnd: 1 })}
+        >
+          Reset Trim
+        </button>
+      </div>
+      <svg
+        viewBox={`0 0 ${SAMPLE_TRIM_GRAPH_BOUNDS.width} ${SAMPLE_TRIM_GRAPH_BOUNDS.height}`}
+        className={sampleTrimWaveformClassName}
+        onPointerMove={(event) => {
+          if (!dragTarget) {
+            return;
+          }
+
+          const rect = event.currentTarget.getBoundingClientRect();
+          const relativeX = ((event.clientX - rect.left) / rect.width) * SAMPLE_TRIM_GRAPH_BOUNDS.width;
+          updateFromPointer(relativeX, dragTarget);
+        }}
+        onPointerUp={() => setDragTarget(null)}
+        onPointerLeave={() => setDragTarget(null)}
+      >
+        <rect
+          x={SAMPLE_TRIM_GRAPH_BOUNDS.xStart}
+          y={SAMPLE_TRIM_GRAPH_BOUNDS.yTop}
+          width={graphWidth}
+          height={graphHeight}
+          fill="transparent"
+          stroke="#bec2ba"
+          strokeWidth="1"
+          rx="6"
+        />
+        {waveformPeaks.map((peak, index) => {
+          const x =
+            SAMPLE_TRIM_GRAPH_BOUNDS.xStart + ((index + 0.5) / waveformPeaks.length) * graphWidth;
+          const height = Math.max(2, peak * (graphHeight * 0.9));
+          const centerY = SAMPLE_TRIM_GRAPH_BOUNDS.yTop + graphHeight / 2;
+          return (
+            <line
+              key={`waveform-bar-${index}`}
+              x1={x}
+              y1={centerY - height / 2}
+              x2={x}
+              y2={centerY + height / 2}
+              stroke="#666f7f"
+              strokeWidth={2}
+              strokeLinecap="round"
+              opacity={0.72}
+            />
+          );
+        })}
+        <rect
+          x={SAMPLE_TRIM_GRAPH_BOUNDS.xStart}
+          y={SAMPLE_TRIM_GRAPH_BOUNDS.yTop}
+          width={Math.max(0, startX - SAMPLE_TRIM_GRAPH_BOUNDS.xStart)}
+          height={graphHeight}
+          fill="rgba(25,28,38,0.35)"
+        />
+        <rect
+          x={endX}
+          y={SAMPLE_TRIM_GRAPH_BOUNDS.yTop}
+          width={Math.max(0, SAMPLE_TRIM_GRAPH_BOUNDS.xEnd - endX)}
+          height={graphHeight}
+          fill="rgba(25,28,38,0.35)"
+        />
+        <rect
+          x={startX}
+          y={SAMPLE_TRIM_GRAPH_BOUNDS.yTop}
+          width={Math.max(2, endX - startX)}
+          height={graphHeight}
+          fill="rgba(255,140,43,0.18)"
+        />
+
+        <line
+          x1={startX}
+          y1={SAMPLE_TRIM_GRAPH_BOUNDS.yTop}
+          x2={startX}
+          y2={SAMPLE_TRIM_GRAPH_BOUNDS.yBottom}
+          stroke="#ff8c2b"
+          strokeWidth="2"
+        />
+        <line
+          x1={endX}
+          y1={SAMPLE_TRIM_GRAPH_BOUNDS.yTop}
+          x2={endX}
+          y2={SAMPLE_TRIM_GRAPH_BOUNDS.yBottom}
+          stroke="#ff8c2b"
+          strokeWidth="2"
+        />
+
+        <circle
+          cx={startX}
+          cy={SAMPLE_TRIM_GRAPH_BOUNDS.yTop + 10}
+          r="7"
+          fill="#f8f7f1"
+          stroke="#ff8c2b"
+          strokeWidth="2"
+          className="cursor-ew-resize"
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setDragTarget("start");
+          }}
+        />
+        <circle
+          cx={endX}
+          cy={SAMPLE_TRIM_GRAPH_BOUNDS.yTop + 10}
+          r="7"
+          fill="#f8f7f1"
+          stroke="#ff8c2b"
+          strokeWidth="2"
+          className="cursor-ew-resize"
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setDragTarget("end");
+          }}
+        />
+      </svg>
+
+      <div className={sampleTrimFaderListClassName}>
+        <label className={envelopeFaderRowClassName}>
+          <span className={envelopeFaderLabelClassName}>Start</span>
+          <input
+            type="range"
+            min={MIN_PAD_SAMPLE_START}
+            max={Math.max(MIN_PAD_SAMPLE_START, normalizedSampleEnd - MIN_PAD_SAMPLE_TRIM_RANGE)}
+            step={0.001}
+            value={normalizedSampleStart}
+            onChange={(event) =>
+              onChange({
+                sampleStart: clamp(
+                  Number(event.target.value),
+                  MIN_PAD_SAMPLE_START,
+                  normalizedSampleEnd - MIN_PAD_SAMPLE_TRIM_RANGE
+                ),
+              })
+            }
+            className={envelopeFaderInputClassName}
+          />
+          <span className={envelopeFaderValueClassName}>{formatSeconds(startTimeSeconds)}</span>
+        </label>
+        <label className={envelopeFaderRowClassName}>
+          <span className={envelopeFaderLabelClassName}>End</span>
+          <input
+            type="range"
+            min={Math.min(MAX_PAD_SAMPLE_END, normalizedSampleStart + MIN_PAD_SAMPLE_TRIM_RANGE)}
+            max={MAX_PAD_SAMPLE_END}
+            step={0.001}
+            value={normalizedSampleEnd}
+            onChange={(event) =>
+              onChange({
+                sampleEnd: clamp(
+                  Number(event.target.value),
+                  normalizedSampleStart + MIN_PAD_SAMPLE_TRIM_RANGE,
+                  MAX_PAD_SAMPLE_END
+                ),
+              })
+            }
+            className={envelopeFaderInputClassName}
+          />
+          <span className={envelopeFaderValueClassName}>{formatSeconds(endTimeSeconds)}</span>
+        </label>
+      </div>
+      <div className={sampleTrimHintClassName}>
+        Drag markers or use sliders to set non-destructive sample start and end playback points.
+      </div>
+    </div>
   );
 };
 
@@ -411,6 +727,8 @@ const PadSampleEditorModal = ({
   isOpen,
   padName,
   sampleName,
+  sampleBuffer,
+  isSampleBufferLoading = false,
   padVolume,
   padPolyphony,
   isLoopEnabled,
@@ -550,6 +868,16 @@ const PadSampleEditorModal = ({
                           Clear
                         </button>
                       </div>
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <SampleTrimEditor
+                        sampleBuffer={sampleBuffer}
+                        isSampleBufferLoading={isSampleBufferLoading}
+                        sampleStart={settings.sampleStart}
+                        sampleEnd={settings.sampleEnd}
+                        onChange={onChange}
+                      />
                     </div>
                   </div>
                 </div>
