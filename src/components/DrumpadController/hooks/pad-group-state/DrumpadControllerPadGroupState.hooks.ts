@@ -22,6 +22,7 @@ UsePadGroupStateHandlersInput,
 
 export const usePadGroupStateHandlers = ({
   activePadGroupId,
+  activePadGroupIdRef,
   buildPadGroupStateSnapshot,
   cancelCountIn,
   clearScheduledTickVisualTimeouts,
@@ -148,11 +149,13 @@ export const usePadGroupStateHandlers = ({
       nextPadGroups[groupId] = clonePadGroupState(targetPadGroup);
 
       setPadGroupsState(nextPadGroups);
+      activePadGroupIdRef.current = groupId;
       setActivePadGroupId(groupId);
       applyPadGroupState(targetPadGroup);
     },
     [
       activePadGroupId,
+      activePadGroupIdRef,
       applyPadGroupState,
       buildPadGroupStateSnapshot,
       cancelCountIn,
@@ -179,4 +182,3 @@ export const usePadGroupStateHandlers = ({
     warmAssignedSamples,
   };
 };
-

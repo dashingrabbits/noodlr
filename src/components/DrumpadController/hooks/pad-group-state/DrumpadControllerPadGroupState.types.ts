@@ -18,6 +18,7 @@ PadVolumes,
 
 export type UsePadGroupStateHandlersInput = {
   activePadGroupId: PadGroupId;
+  activePadGroupIdRef: MutableRefObject<PadGroupId>;
   buildPadGroupStateSnapshot: () => PadGroupState;
   cancelCountIn: () => void;
   clearScheduledTickVisualTimeouts: () => void;

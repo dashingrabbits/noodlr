@@ -5,17 +5,22 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:lan": "vite --host",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "session-server": "node server/session-server.mjs"
   },
   "dependencies": {
+    "@fastify/websocket": "^11.2.0",
     "@radix-ui/react-dialog": "^1.1.15",
+    "fastify": "^5.7.4",
     "jszip": "^3.10.1",
     "lucide-react": "^0.564.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-knob-headless": "^0.4.0"
+    "react-knob-headless": "^0.4.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",

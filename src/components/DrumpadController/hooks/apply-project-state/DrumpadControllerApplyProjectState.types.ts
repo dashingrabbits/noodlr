@@ -36,3 +36,8 @@ export type UseApplyProjectStateInput = {
   stopAllMetronomeSources: () => void;
   stopAllOneShotBufferSources: () => void;
 };
+
+export type ApplyProjectStateOptions = {
+  selectedProjectId?: string;
+  preserveTransport?: boolean;
+};

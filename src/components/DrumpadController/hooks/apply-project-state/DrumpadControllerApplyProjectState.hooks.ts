@@ -25,6 +25,7 @@ isSequencerStepLength,
 } from "../../helpers/pattern";
 
 import type {
+ApplyProjectStateOptions,
 UseApplyProjectStateInput,
 } from "./DrumpadControllerApplyProjectState.types";
 
@@ -56,7 +57,7 @@ export const useApplyProjectState = ({
   return useCallback(
     (
       candidateProjectState: Partial<ProjectState>,
-      options?: { selectedProjectId?: string }
+      options?: ApplyProjectStateOptions
     ) => {
       const hasPadGroups =
         Boolean(candidateProjectState.padGroups) &&
@@ -117,14 +118,16 @@ export const useApplyProjectState = ({
         candidateProjectState.sequencerPanelMode
       );
 
-      cancelCountIn();
-      stopAllLoopBufferSources();
-      stopAllOneShotBufferSources();
-      stopAllMetronomeSources();
-      currentTickRef.current = 0;
-      setCurrentStep(0);
-      setIsPlaying(false);
-      setIsRecording(false);
+      if (!options?.preserveTransport) {
+        cancelCountIn();
+        stopAllLoopBufferSources();
+        stopAllOneShotBufferSources();
+        stopAllMetronomeSources();
+        currentTickRef.current = 0;
+        setCurrentStep(0);
+        setIsPlaying(false);
+        setIsRecording(false);
+      }
 
       if (options?.selectedProjectId !== undefined) {
         setSelectedProjectId(options.selectedProjectId);
@@ -141,8 +144,10 @@ export const useApplyProjectState = ({
       setActiveSceneId(nextActiveSceneId);
       setSongArrangement(nextSongArrangement);
       setSongSceneDraftId(nextActiveSceneId);
-      setCurrentSongEntryIndex(null);
-      setCurrentSongEntryProgress(null);
+      if (!options?.preserveTransport) {
+        setCurrentSongEntryIndex(null);
+        setCurrentSongEntryProgress(null);
+      }
       setSequencerBpm(
         clampSequencerBpm(Number(candidateProjectState.sequencerBpm ?? DEFAULT_SEQUENCER_BPM))
       );
@@ -180,4 +185,3 @@ export const useApplyProjectState = ({
     ]
   );
 };
-

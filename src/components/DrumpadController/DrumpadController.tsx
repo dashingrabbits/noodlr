@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import DrumpadHeader from "../DrumpadHeader";
 import DrumpadGrid from "../DrumpadGrid";
 import MasterControls from "../MasterControls";
@@ -114,6 +114,7 @@ import { useRefSynchronization } from "./hooks/ref-sync";
 import { useStateSyncEffects } from "./hooks/state-sync";
 import { useKitStateHandlers } from "./hooks/kit-state";
 import { useEditingPadSampleBufferEffect } from "./hooks/editing-pad-buffer";
+import { useSessionCollaboration } from "./hooks/session-collaboration";
 import { cloneSceneDefinitions } from "./helpers/scene";
 
 const DrumpadController = () => {
@@ -598,6 +599,7 @@ const DrumpadController = () => {
   const { applyPadGroupState, handleSelectPadGroup, warmAssignedSamples } =
     usePadGroupStateHandlers({
       activePadGroupId,
+      activePadGroupIdRef,
       buildPadGroupStateSnapshot,
       cancelCountIn,
       clearScheduledTickVisualTimeouts,
@@ -939,6 +941,39 @@ const DrumpadController = () => {
     setSelectedProjectId,
   });
 
+  const {
+    clearSessionEnvironment,
+    clearSessionError,
+    copySessionId,
+    handleJoinSession,
+    handleLeaveSession,
+    handleResolveSessionEndPrompt,
+    handleShareSession,
+    isSessionEndPromptOpen,
+    isSessionHost,
+    queueSessionSync,
+    sessionConnectionStatus,
+    sessionError,
+    sessionId,
+  } = useSessionCollaboration({
+    activePadGroupIdRef,
+    activeSceneRef,
+    applyProjectState,
+    buildProjectStateSnapshot,
+    ensureSampleBuffer,
+    importedSampleObjectUrlsRef,
+    livePadGroupsStateRef,
+    sampleAssetsById,
+    sampleMetadataOverrides,
+    sequencerPanelModeRef,
+    setImportedSampleAssets,
+    setSampleMetadataOverrides,
+  });
+
+  useEffect(() => {
+    queueSessionSync();
+  }, [queueSessionSync, buildProjectStateSnapshot, sampleMetadataOverrides, sampleAssetsById]);
+
   const { handleClearSequence, handleCreateNewProject } = useResetHandlers({
     cancelCountIn,
     clearProjectLoadFeedback,
@@ -984,6 +1019,17 @@ const DrumpadController = () => {
     stopAllOneShotBufferSources,
     stopPreviewBufferSource,
   });
+
+  const handleSessionEndDiscard = useCallback(() => {
+    clearSessionEnvironment();
+    handleCreateNewProject();
+  }, [clearSessionEnvironment, handleCreateNewProject]);
+
+  const handleSessionEndDownload = useCallback(async () => {
+    await handleExportProject();
+    clearSessionEnvironment();
+    handleCreateNewProject();
+  }, [clearSessionEnvironment, handleCreateNewProject, handleExportProject]);
 
   useLifecycleCleanupEffect({
     audioContextRef,
@@ -1121,6 +1167,21 @@ const DrumpadController = () => {
               />
             </div>
             <SampleLibrarySidebar
+              sessionSharingProps={{
+                sessionConnectionStatus,
+                sessionError,
+                sessionId,
+                isSessionHost,
+                isSessionEndPromptOpen,
+                onClearSessionError: clearSessionError,
+                onCopySessionId: copySessionId,
+                onHandleSessionEndDownload: handleSessionEndDownload,
+                onHandleSessionEndDiscard: handleSessionEndDiscard,
+                onJoinSession: handleJoinSession,
+                onLeaveSession: handleLeaveSession,
+                onResolveSessionEndPrompt: handleResolveSessionEndPrompt,
+                onShareSession: handleShareSession,
+              }}
               rootDir={sampleRootDir}
               supportsDirectoryPicker={supportsDirectoryPicker}
               search={sampleSearch}

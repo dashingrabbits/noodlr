@@ -1,6 +1,8 @@
 import type { SampleAsset, SampleMetadataOverride } from "../../integrations/samples/sample.types";
+import type { SessionSharingProps } from "../SessionSharing";
 
 export interface SampleLibrarySidebarProps {
+  sessionSharingProps: SessionSharingProps;
   rootDir: string;
   supportsDirectoryPicker: boolean;
   search: string;

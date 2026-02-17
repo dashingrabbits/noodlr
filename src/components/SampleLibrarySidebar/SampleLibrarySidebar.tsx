@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import type { SampleCategory } from "../../integrations/samples/sample.types";
+import SessionSharing from "../SessionSharing";
 import type { SampleLibrarySidebarProps } from "./SampleLibrarySidebar.types";
 import {
   buildSampleCountLabel,
@@ -24,6 +25,7 @@ const SAMPLES_PAGE_SIZE = 100;
 const SCROLL_LOAD_THRESHOLD_PX = 96;
 
 const SampleLibrarySidebar = ({
+  sessionSharingProps,
   rootDir,
   supportsDirectoryPicker,
   search,
@@ -110,6 +112,8 @@ const SampleLibrarySidebar = ({
 
   return (
     <aside className={sidebarClassName}>
+      <SessionSharing {...sessionSharingProps} />
+
       {supportsDirectoryPicker ? (
         <div className="mb-3">
           <label className={labelClassName}>LOCAL SAMPLE FOLDER</label>
