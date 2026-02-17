@@ -59,19 +59,11 @@ export const getStepCellClassName = (
   const isAltFourStepBlock = Math.floor(stepIndex / 4) % 2 === 1;
 
   if (isEnabled && isCurrentStep && isPlaying) {
-    return `${stepCellClassName} ${
-      isAltFourStepBlock
-        ? "bg-[#ffb257] border-[#d98934]"
-        : "bg-[#ff8c2b] border-[#cc6e20]"
-    } shadow-[0_0_0_2px_rgba(255,140,43,0.28)]`;
+    return `${stepCellClassName} bg-[#ff8c2b] border-[#cc6e20] shadow-[0_0_0_2px_rgba(255,140,43,0.28)]`;
   }
 
   if (isEnabled) {
-    return `${stepCellClassName} ${
-      isAltFourStepBlock
-        ? "bg-[#ffc986] border-[#dc9d57] hover:bg-[#ffbf73]"
-        : "bg-[#ffa14f] border-[#d67e2d] hover:bg-[#ff9540]"
-    }`;
+    return `${stepCellClassName} bg-[#ffa14f] border-[#d67e2d] hover:bg-[#ff9540]`;
   }
 
   if (isCurrentStep && isPlaying) {
