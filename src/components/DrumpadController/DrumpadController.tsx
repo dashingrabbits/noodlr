@@ -275,6 +275,89 @@ const getSamplePlaybackBounds = (
   };
 };
 
+const createOfflineRenderOutputCompressor = (
+  offlineContext: OfflineAudioContext
+): DynamicsCompressorNode => {
+  const outputCompressor = offlineContext.createDynamicsCompressor();
+  outputCompressor.threshold.value = -10;
+  outputCompressor.knee.value = 10;
+  outputCompressor.ratio.value = 12;
+  outputCompressor.attack.value = 0.003;
+  outputCompressor.release.value = 0.08;
+  outputCompressor.connect(offlineContext.destination);
+  return outputCompressor;
+};
+
+const createOfflineReverbImpulseBuffer = (
+  offlineContext: OfflineAudioContext
+): AudioBuffer => {
+  const durationSeconds = 1.8;
+  const length = Math.floor(offlineContext.sampleRate * durationSeconds);
+  const impulseBuffer = offlineContext.createBuffer(2, length, offlineContext.sampleRate);
+
+  for (let channel = 0; channel < impulseBuffer.numberOfChannels; channel += 1) {
+    const channelData = impulseBuffer.getChannelData(channel);
+    for (let sampleIndex = 0; sampleIndex < length; sampleIndex += 1) {
+      const decay = Math.pow(1 - sampleIndex / length, 3);
+      channelData[sampleIndex] = (Math.random() * 2 - 1) * decay;
+    }
+  }
+
+  return impulseBuffer;
+};
+
+const createOfflineRenderVoiceGainNodeFactory = (
+  offlineContext: OfflineAudioContext,
+  outputNode: AudioNode
+): ((sampleSettings: PadSampleSettings) => GainNode) => {
+  const reverbImpulseBuffer = createOfflineReverbImpulseBuffer(offlineContext);
+
+  return (sampleSettings: PadSampleSettings): GainNode => {
+    const voiceGainNode = offlineContext.createGain();
+    const reverbMix = Math.max(0, Math.min(1, sampleSettings.reverbMix));
+    const delayMix = Math.max(0, Math.min(1, sampleSettings.delayMix));
+    const dryMix = Math.max(0, 1 - Math.min(1, reverbMix + delayMix));
+
+    const dryGainNode = offlineContext.createGain();
+    dryGainNode.gain.value = dryMix;
+    voiceGainNode.connect(dryGainNode);
+    dryGainNode.connect(outputNode);
+
+    if (reverbMix > 0.001) {
+      const reverbSendGainNode = offlineContext.createGain();
+      reverbSendGainNode.gain.value = reverbMix;
+      const convolverNode = offlineContext.createConvolver();
+      convolverNode.buffer = reverbImpulseBuffer;
+
+      voiceGainNode.connect(reverbSendGainNode);
+      reverbSendGainNode.connect(convolverNode);
+      convolverNode.connect(outputNode);
+    }
+
+    if (delayMix > 0.001) {
+      const delaySendGainNode = offlineContext.createGain();
+      delaySendGainNode.gain.value = delayMix;
+
+      const delayNode = offlineContext.createDelay(1.0);
+      delayNode.delayTime.value = Math.max(
+        0.001,
+        Math.min(1, sampleSettings.delayTimeMs / 1000)
+      );
+
+      const feedbackGainNode = offlineContext.createGain();
+      feedbackGainNode.gain.value = Math.max(0, Math.min(0.95, sampleSettings.delayFeedback));
+
+      voiceGainNode.connect(delaySendGainNode);
+      delaySendGainNode.connect(delayNode);
+      delayNode.connect(feedbackGainNode);
+      feedbackGainNode.connect(delayNode);
+      delayNode.connect(outputNode);
+    }
+
+    return voiceGainNode;
+  };
+};
+
 const areSceneDefinitionsEqual = (
   leftScenes: SceneDefinition[],
   rightScenes: SceneDefinition[]
@@ -4182,21 +4265,6 @@ const DrumpadController = () => {
         throw new Error("No active sequencer steps to export.");
       }
 
-      const gcd = (left: number, right: number): number => {
-        let a = Math.abs(left);
-        let b = Math.abs(right);
-        while (b !== 0) {
-          const next = a % b;
-          a = b;
-          b = next;
-        }
-        return a || 1;
-      };
-
-      const lcm = (left: number, right: number): number => {
-        return Math.abs(left * right) / gcd(left, right);
-      };
-
       // Duration spans one full polymetric cycle across all active rows.
       const rowLoopTicksByPad = sequencePadIds.map((padId) => {
         const rowStepLength = padStepLength[padId] ?? DEFAULT_ROW_STEP_LENGTH;
@@ -4269,80 +4337,11 @@ const DrumpadController = () => {
         Math.max(1, Math.ceil(totalDurationSeconds * sampleRate)),
         sampleRate
       );
-
-      const outputCompressor = offlineContext.createDynamicsCompressor();
-      outputCompressor.threshold.value = -10;
-      outputCompressor.knee.value = 10;
-      outputCompressor.ratio.value = 12;
-      outputCompressor.attack.value = 0.003;
-      outputCompressor.release.value = 0.08;
-      outputCompressor.connect(offlineContext.destination);
-
-      const createReverbImpulseBuffer = (): AudioBuffer => {
-        const durationSeconds = 1.8;
-        const length = Math.floor(offlineContext.sampleRate * durationSeconds);
-        const impulseBuffer = offlineContext.createBuffer(2, length, offlineContext.sampleRate);
-
-        for (let channel = 0; channel < impulseBuffer.numberOfChannels; channel += 1) {
-          const channelData = impulseBuffer.getChannelData(channel);
-          for (let sampleIndex = 0; sampleIndex < length; sampleIndex += 1) {
-            const decay = Math.pow(1 - sampleIndex / length, 3);
-            channelData[sampleIndex] = (Math.random() * 2 - 1) * decay;
-          }
-        }
-
-        return impulseBuffer;
-      };
-
-      const reverbImpulseBuffer = createReverbImpulseBuffer();
-
-      const createRenderVoiceGainNode = (sampleSettings: PadSampleSettings): GainNode => {
-        const voiceGainNode = offlineContext.createGain();
-        const reverbMix = Math.max(0, Math.min(1, sampleSettings.reverbMix));
-        const delayMix = Math.max(0, Math.min(1, sampleSettings.delayMix));
-        const dryMix = Math.max(0, 1 - Math.min(1, reverbMix + delayMix));
-
-        const dryGainNode = offlineContext.createGain();
-        dryGainNode.gain.value = dryMix;
-        voiceGainNode.connect(dryGainNode);
-        dryGainNode.connect(outputCompressor);
-
-        if (reverbMix > 0.001) {
-          const reverbSendGainNode = offlineContext.createGain();
-          reverbSendGainNode.gain.value = reverbMix;
-          const convolverNode = offlineContext.createConvolver();
-          convolverNode.buffer = reverbImpulseBuffer;
-
-          voiceGainNode.connect(reverbSendGainNode);
-          reverbSendGainNode.connect(convolverNode);
-          convolverNode.connect(outputCompressor);
-        }
-
-        if (delayMix > 0.001) {
-          const delaySendGainNode = offlineContext.createGain();
-          delaySendGainNode.gain.value = delayMix;
-
-          const delayNode = offlineContext.createDelay(1.0);
-          delayNode.delayTime.value = Math.max(
-            0.001,
-            Math.min(1, sampleSettings.delayTimeMs / 1000)
-          );
-
-          const feedbackGainNode = offlineContext.createGain();
-          feedbackGainNode.gain.value = Math.max(
-            0,
-            Math.min(0.95, sampleSettings.delayFeedback)
-          );
-
-          voiceGainNode.connect(delaySendGainNode);
-          delaySendGainNode.connect(delayNode);
-          delayNode.connect(feedbackGainNode);
-          feedbackGainNode.connect(delayNode);
-          delayNode.connect(outputCompressor);
-        }
-
-        return voiceGainNode;
-      };
+      const outputCompressor = createOfflineRenderOutputCompressor(offlineContext);
+      const createRenderVoiceGainNode = createOfflineRenderVoiceGainNodeFactory(
+        offlineContext,
+        outputCompressor
+      );
 
       type RenderLoopVoice = {
         source: AudioBufferSourceNode;
@@ -4657,79 +4656,11 @@ const DrumpadController = () => {
       sampleRate
     );
 
-    const outputCompressor = offlineContext.createDynamicsCompressor();
-    outputCompressor.threshold.value = -10;
-    outputCompressor.knee.value = 10;
-    outputCompressor.ratio.value = 12;
-    outputCompressor.attack.value = 0.003;
-    outputCompressor.release.value = 0.08;
-    outputCompressor.connect(offlineContext.destination);
-
-    const createReverbImpulseBuffer = (): AudioBuffer => {
-      const durationSeconds = 1.8;
-      const length = Math.floor(offlineContext.sampleRate * durationSeconds);
-      const impulseBuffer = offlineContext.createBuffer(2, length, offlineContext.sampleRate);
-
-      for (let channel = 0; channel < impulseBuffer.numberOfChannels; channel += 1) {
-        const channelData = impulseBuffer.getChannelData(channel);
-        for (let sampleIndex = 0; sampleIndex < length; sampleIndex += 1) {
-          const decay = Math.pow(1 - sampleIndex / length, 3);
-          channelData[sampleIndex] = (Math.random() * 2 - 1) * decay;
-        }
-      }
-
-      return impulseBuffer;
-    };
-
-    const reverbImpulseBuffer = createReverbImpulseBuffer();
-
-    const createRenderVoiceGainNode = (sampleSettings: PadSampleSettings): GainNode => {
-      const voiceGainNode = offlineContext.createGain();
-      const reverbMix = Math.max(0, Math.min(1, sampleSettings.reverbMix));
-      const delayMix = Math.max(0, Math.min(1, sampleSettings.delayMix));
-      const dryMix = Math.max(0, 1 - Math.min(1, reverbMix + delayMix));
-
-      const dryGainNode = offlineContext.createGain();
-      dryGainNode.gain.value = dryMix;
-      voiceGainNode.connect(dryGainNode);
-      dryGainNode.connect(outputCompressor);
-
-      if (reverbMix > 0.001) {
-        const reverbSendGainNode = offlineContext.createGain();
-        reverbSendGainNode.gain.value = reverbMix;
-        const convolverNode = offlineContext.createConvolver();
-        convolverNode.buffer = reverbImpulseBuffer;
-
-        voiceGainNode.connect(reverbSendGainNode);
-        reverbSendGainNode.connect(convolverNode);
-        convolverNode.connect(outputCompressor);
-      }
-
-      if (delayMix > 0.001) {
-        const delaySendGainNode = offlineContext.createGain();
-        delaySendGainNode.gain.value = delayMix;
-
-        const delayNode = offlineContext.createDelay(1.0);
-        delayNode.delayTime.value = Math.max(
-          0.001,
-          Math.min(1, sampleSettings.delayTimeMs / 1000)
-        );
-
-        const feedbackGainNode = offlineContext.createGain();
-        feedbackGainNode.gain.value = Math.max(
-          0,
-          Math.min(0.95, sampleSettings.delayFeedback)
-        );
-
-        voiceGainNode.connect(delaySendGainNode);
-        delaySendGainNode.connect(delayNode);
-        delayNode.connect(feedbackGainNode);
-        feedbackGainNode.connect(delayNode);
-        delayNode.connect(outputCompressor);
-      }
-
-      return voiceGainNode;
-    };
+    const outputCompressor = createOfflineRenderOutputCompressor(offlineContext);
+    const createRenderVoiceGainNode = createOfflineRenderVoiceGainNodeFactory(
+      offlineContext,
+      outputCompressor
+    );
 
     type RenderLoopVoice = {
       source: AudioBufferSourceNode;

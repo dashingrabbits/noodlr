@@ -6,8 +6,6 @@ export type DrumPadConfig = {
   color: string;
   key: string;
 };
-
-export type DrumPad = DrumPadConfig;
 export type PadGroupId = 1 | 2 | 3 | 4;
 export type PadVolumes = Record<number, number>;
 export type PadNames = Record<number, string>;

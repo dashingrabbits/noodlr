@@ -1,4 +1,3 @@
-import type { Dispatch, SetStateAction } from "react";
 import type {
   DrumPadConfig,
   PadLoopEnabled,
@@ -15,7 +14,6 @@ import type {
 
 export const DEFAULT_PAD_VOLUME = 75;
 export const PAD_TRIGGER_DURATION_MS = 150;
-export const PAD_NAME_MAX_LENGTH = 12;
 export const MIN_SAMPLE_POLYPHONY = 1;
 export const MAX_SAMPLE_POLYPHONY = 8;
 export const DEFAULT_SAMPLE_POLYPHONY = 1;
@@ -268,25 +266,4 @@ export const writePersistedSampleSoundsDir = (value: string): void => {
 
   window.localStorage.setItem(SAMPLE_SOUNDS_DIR_STORAGE_KEY, normalizedValue);
   window.sessionStorage.setItem(SAMPLE_SOUNDS_DIR_STORAGE_KEY, normalizedValue);
-};
-
-export const setPadActiveTemporarily = (
-  setActivePads: Dispatch<SetStateAction<Set<number>>>,
-  padId: number,
-  durationMs = PAD_TRIGGER_DURATION_MS
-) => {
-  setActivePads((previous) => new Set([...previous, padId]));
-
-  window.setTimeout(() => {
-    setActivePads((previous) => {
-      const next = new Set(previous);
-      next.delete(padId);
-      return next;
-    });
-  }, durationMs);
-};
-
-export const getVisiblePadName = (pad: DrumPadConfig, names: PadNames): string => {
-  const candidate = names[pad.id] ?? pad.label;
-  return candidate.trim() ? candidate : pad.label;
 };
