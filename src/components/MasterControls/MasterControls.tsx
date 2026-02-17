@@ -1,4 +1,4 @@
-import { ChevronDown, Download, Play, RotateCcw, Save, Square, Trash2, Upload, Volume2, VolumeX } from "lucide-react";
+import { ChevronDown, Download, FilePlus2, Play, RotateCcw, Save, Square, Trash2, Upload, Volume2, VolumeX } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { MasterControlsProps } from "./MasterControls.types";
 import {
@@ -27,6 +27,7 @@ const MasterControls = ({
   onTogglePlayback,
   onClearSequence,
   onOpenSaveProjectModal,
+  onCreateNewProject,
   onProjectSelect,
   onDeleteProject,
   onExportProject,
@@ -214,6 +215,17 @@ const MasterControls = ({
                 >
                   <Save size={14} />
                   Save Project
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsProjectMenuOpen(false);
+                    onCreateNewProject();
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded text-left text-xs font-bold text-[#515a6a] hover:bg-[#e8e7e1] transition-colors border-b border-[#bdbab0] mb-1"
+                >
+                  <FilePlus2 size={14} />
+                  New Project
                 </button>
                 {projectOptions.length > 0 ? (
                   projectOptions.map((projectOption) => {

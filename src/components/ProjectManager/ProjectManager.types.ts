@@ -19,8 +19,19 @@ import type {
 import type { SequencerStepLength } from "../StepSequencer/StepSequencer.utilities";
 import type { SampleMetadataOverrides } from "../../integrations/samples/sample.types";
 
+export type ProjectSampleSourceType = "path" | "directory-handle" | "imported";
+
+export interface ProjectSampleReference {
+  sampleId: string;
+  name: string;
+  relativePath?: string;
+}
+
 export interface ProjectState {
   masterVolume: number;
+  sampleSourceType?: ProjectSampleSourceType;
+  sampleRootDir?: string;
+  sampleReferences?: ProjectSampleReference[];
   sequencerPanelMode?: SequencerPanelMode;
   sceneDefinitions?: SceneDefinition[];
   activeSceneId?: string;

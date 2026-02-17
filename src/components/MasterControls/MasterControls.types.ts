@@ -16,6 +16,7 @@ export interface MasterControlsProps {
   onTogglePlayback: () => void;
   onClearSequence: () => void;
   onOpenSaveProjectModal: () => void;
+  onCreateNewProject: () => void;
   onProjectSelect: (projectId: string) => void;
   onDeleteProject: (projectId: string) => void;
   onExportProject: () => Promise<void> | void;
