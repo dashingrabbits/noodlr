@@ -1,0 +1,21 @@
+import { STEPS_IN_SEQUENCE, type SequencerStepLength } from "../../StepSequencer/StepSequencer.utilities";
+import type { PadGroupId, SequencerPanelMode } from "../DrumpadController.types";
+
+export const SEQUENCER_STEP_LENGTH_OPTIONS: SequencerStepLength[] = ["1/4", "1/8", "1/16", "1/32"];
+export const TRANSPORT_SCHEDULER_INTERVAL_MS = 20;
+export const TRANSPORT_SCHEDULE_AHEAD_TIME_SECONDS = 0.1;
+export const VOICE_STOP_FADE_SECONDS = 0.005;
+export const IMPORTED_SAMPLE_ID_PREFIX = "imported";
+export const IMPORTED_PROJECT_SAMPLE_ID_PREFIX = "imported-project";
+export const DEMO_KIT_IMPORTED_ID_PREFIX = "demo-kit";
+export const PROJECT_ARCHIVE_ACCEPT = ".zip,.noodlr-project.zip,application/zip";
+export const KIT_ARCHIVE_ACCEPT = ".zip,.noodlr-kit.zip,application/zip";
+export const DEMO_KIT_ARCHIVE_URL = "/demo/Kit-2026-02-16T17-48-37.noodlr-kit.zip";
+export const DEMO_KIT_ARCHIVE_FILE_NAME = "Kit-2026-02-16T17-48-37.noodlr-kit.zip";
+export const DEMO_KIT_AUTOLOAD_STORAGE_KEY = "noodlr.demoKitAutoLoaded.v1";
+export const PAD_GROUP_IDS: PadGroupId[] = [1, 2, 3, 4];
+export const DEFAULT_ACTIVE_PAD_GROUP_ID: PadGroupId = 1;
+export const DEFAULT_SEQUENCER_PANEL_MODE: SequencerPanelMode = "sequencer";
+export const EMPTY_STEP_OCTAVE_SEQUENCE = Array.from({ length: STEPS_IN_SEQUENCE }, () => 0);
+export const RECORD_COUNT_IN_BEATS = 4;
+export const MAX_SCENE_NAME_LENGTH = 48;

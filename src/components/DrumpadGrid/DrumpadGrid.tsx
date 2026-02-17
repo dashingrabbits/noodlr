@@ -1,4 +1,4 @@
-import Drumpad from "../Drumpad/Drumpad";
+import Drumpad from "../Drumpad";
 import type { DrumpadGridProps } from "./DrumpadGrid.types";
 import { resolvePadVolume } from "./DrumpadGrid.utilities";
 import { gridClassName } from "./DrumpadGrid.styles";
